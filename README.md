@@ -1,4 +1,5 @@
 # gloBFPr
+<img style="float: right;" src="https://raw.githubusercontent.com/billbillbilly/gloBFPr/b0e9bb3526346a9c6b4d5aec27041443763cbef2/logo.svg">
 Access and analyze the Building Footprint Datasets.
 
 ## Overview
@@ -61,6 +62,21 @@ ensuring detailed spatial representation of building geometries within
 the defined area of interest.
 
 Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
+
+#### output examples
+<p align="center">
+  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BFshp.png?raw=true" width="45%">
+&nbsp; &nbsp; &nbsp; &nbsp;
+  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BHshp.png?raw=true" width="45%">
+</p>
+
+<p align="center">
+  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BF.png?raw=true" width="30%">
+&nbsp; &nbsp; &nbsp; &nbsp;
+  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BH.png?raw=true" width="30%">
+&nbsp; &nbsp; &nbsp; &nbsp;
+  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/croppedBH.png?raw=true" width="30%">
+</p>
 
 ## Note
 The downloading process may take some time, depending on the number and size

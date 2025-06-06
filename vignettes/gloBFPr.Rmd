@@ -2,14 +2,14 @@
 title: "gloBFPr"
 author: "Xiaohao Yang"
 vignette: >
-  %\VignetteIndexEntry{dsmSearch}
+  %\VignetteIndexEntry{gloBFPr}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ## Step 1 Get the Spatial Grid with the Metadata of the Dataset
 
-```{r eval = FALSE}
+```{r eval=FALSE}
 metadata <- gloBFPr::get_metadata()
 ```
 
@@ -22,7 +22,7 @@ Set `out_type = "all"` o return a comprehensive list of outputs, including:
 
 Specify `cell_size = 1` to generate raster layers with 1-meter resolution, ensuring detailed spatial representation of building geometries within the defined area of interest.
 
-```{r ecal = FALSE}
+```{r eval=FALSE}
 buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
                                            metadata = metadata, out_type = "all", cell_size = 1)
 ```
@@ -31,7 +31,7 @@ buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045
 
 Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
 
-```{r ecal = FALSE}
+```{r eval=FALSE}
 buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
                                            metadata = metadata, out_type = "all", 
                                            mask = TRUE, cell_size = 1)
