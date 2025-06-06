@@ -72,21 +72,16 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 #### Output examples:
 <p align="center">
   <img src="images/BFshp.png?raw=true" width="45%">
-  <figcaption>building footprint polygons</figcaption>
 &nbsp; &nbsp; &nbsp; &nbsp;
   <img src="images/BHshp.png?raw=true" width="45%">
-  <figcaption>building footprint polygons with heights</figcaption>
 </p>
 
 <p align="center">
   <img src="images/BF.png?raw=true" width="30%">
-  <figcaption>binary building footprints</figcaption>
 &nbsp; &nbsp; &nbsp; &nbsp;
   <img src="images/BH.png?raw=true" width="30%">
-  <figcaption>building heights</figcaption>
 &nbsp; &nbsp; &nbsp; &nbsp;
   <img src="images/croppedBH.png?raw=true" width="30%">
-  <figcaption>cropped building heights</figcaption>
 </p>
 
 ## Note
