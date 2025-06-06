@@ -2,5 +2,5 @@
 ^\.Rproj\.user$
 ^.*\.svg$
 ^README\.md$
-^images/$
+^images$
 ^\.github$

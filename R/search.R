@@ -48,11 +48,9 @@
 #' footprint dataset. Earth Syst. Sci. Data, 16, 5357-5374
 #'
 #' @examples
-#' \donttest{
-#' metadata <- gloBFPr::get_metadata()
+#' metadata <- gloBFPr::get_metadata(test=TRUE)
 #' buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
 #'                      metadata=metadata)
-#' }
 #'
 #' @importFrom sf st_bbox
 #' @importFrom sf st_read
@@ -73,6 +71,10 @@ search_3dglobdf <- function(bbox,
                             cell_size=1) {
   if (missing(bbox) || missing(metadata)) {
     stop('bbox or metadata is missing')
+  }
+
+  if (inherits(metadata, "NULL")) {
+    return(NULL)
   }
 
   # check type of bbox
@@ -109,7 +111,7 @@ search_3dglobdf <- function(bbox,
                   mode = "auto",
                   quiet = TRUE)
 
-    utils::unzip_dir <- tempfile()
+    unzip_dir <- tempfile()
     utils::unzip(temp_zip, exdir = unzip_dir)
 
     # Find .shp file
