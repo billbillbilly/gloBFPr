@@ -49,7 +49,7 @@
 #'
 #' @examples
 #' metadata <- gloBFPr::get_metadata()
-#' buildings <- search_(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
+#' buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
 #'                      metadata=metadata)
 #'
 #' @importFrom sf st_bbox
