@@ -48,9 +48,11 @@
 #' footprint dataset. Earth Syst. Sci. Data, 16, 5357-5374
 #'
 #' @examples
+#' \donttest{
 #' metadata <- gloBFPr::get_metadata()
 #' buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
 #'                      metadata=metadata)
+#' }
 #'
 #' @importFrom sf st_bbox
 #' @importFrom sf st_read
@@ -58,6 +60,8 @@
 #' @importFrom sf st_cast
 #' @importFrom sf st_is_valid
 #' @importFrom sf st_intersects
+#' @importFrom utils download.file
+#' @importFrom utils unzip
 #'
 #' @export
 
@@ -100,13 +104,13 @@ search_3dglobdf <- function(bbox,
   result_list <- list()
   for (i in seq_len(nrow(intersecting))) {
     temp_zip <- tempfile(fileext = ".zip")
-    download.file(intersecting$download_url[i],
+    utils::download.file(intersecting$download_url[i],
                   destfile = temp_zip,
                   mode = "auto",
                   quiet = TRUE)
 
-    unzip_dir <- tempfile()
-    unzip(temp_zip, exdir = unzip_dir)
+    utils::unzip_dir <- tempfile()
+    utils::unzip(temp_zip, exdir = unzip_dir)
 
     # Find .shp file
     shp_files <- list.files(unzip_dir, pattern = "\\.shp$", full.names = TRUE)

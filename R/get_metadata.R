@@ -18,7 +18,7 @@
 #' @references
 #' Che, Y., Li, X., Liu, X., Wang, Y., Liao, W., Zheng, X., Zhang, X., Xu, X.,
 #' Shi, Q., Zhu, J., Zhang, H., Yuan, H., & Dai, Y. (2025).
-#' 3D-GloBFP: the first global three-dimensional building footprint dataset [Data set].
+#' 3D-GloBFP: the first global three-dimensional building footprint dataset.
 #' Zenodo. https://doi.org/10.5281/zenodo.15487037
 #'
 #' Che Yangzi, Li Xuecao, Liu Xiaoping, Wang Yuhao, Liao Weilin, Zheng Xianwei,

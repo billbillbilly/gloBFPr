@@ -1,9 +1,15 @@
-# gloBFPr
-<img style="float: right;" src="https://raw.githubusercontent.com/billbillbilly/gloBFPr/b0e9bb3526346a9c6b4d5aec27041443763cbef2/logo.svg">
+# gloBFPr <a href="https://github.com/billbillbilly/gloBFPr/"><img src="logo.svg" align="right" height="150" alt="forestdata website" /></a>
+
+<!-- badges: start -->
+[![Lifecycle:
+experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
+[![R-CMD-check](https://github.com/billbillbilly/gloBFPr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/billbillbilly/gloBFPr/actions/workflows/R-CMD-check.yaml)
+<!-- badges: end -->
+
 Access and analyze the Building Footprint Datasets.
 
 ## Overview
-The gloBFPr package allows R users to search, download, and process global 
+The `gloBFPr` package allows R users to search, download, and process global 
 building footprint tiles with associated height information, derived from the 
 3D-GloBFP dataset published by Che et al. (2024, 2025). The data is hosted on 
 Zenodo and covers global urban areas in shapefile format. The package will look 
@@ -63,19 +69,24 @@ the defined area of interest.
 
 Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
 
-#### output examples
+#### Output examples:
 <p align="center">
-  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BFshp.png?raw=true" width="45%">
+  <img src="images/BFshp.png?raw=true" width="45%">
+  <figcaption>building footprint polygons</figcaption>
 &nbsp; &nbsp; &nbsp; &nbsp;
-  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BHshp.png?raw=true" width="45%">
+  <img src="images/BHshp.png?raw=true" width="45%">
+  <figcaption>building footprint polygons with heights</figcaption>
 </p>
 
 <p align="center">
-  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BF.png?raw=true" width="30%">
+  <img src="images/BF.png?raw=true" width="30%">
+  <figcaption>binary building footprints</figcaption>
 &nbsp; &nbsp; &nbsp; &nbsp;
-  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/BH.png?raw=true" width="30%">
+  <img src="images/BH.png?raw=true" width="30%">
+  <figcaption>building heights</figcaption>
 &nbsp; &nbsp; &nbsp; &nbsp;
-  <img src="https://github.com/billbillbilly/gloBFPr/blob/main/images/croppedBH.png?raw=true" width="30%">
+  <img src="images/croppedBH.png?raw=true" width="30%">
+  <figcaption>cropped building heights</figcaption>
 </p>
 
 ## Note

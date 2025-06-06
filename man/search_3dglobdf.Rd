@@ -63,9 +63,11 @@ This implementation relies on the current structure of the dataset as hosted on 
 It may break if the dataset owner changes the file organization or metadata format.
 }
 \examples{
+\donttest{
 metadata <- gloBFPr::get_metadata()
 buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
                      metadata=metadata)
+}
 
 }
 \references{
