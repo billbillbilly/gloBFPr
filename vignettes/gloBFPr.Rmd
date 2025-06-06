@@ -1,0 +1,38 @@
+---
+title: "gloBFPr"
+author: "Xiaohao Yang"
+vignette: >
+  %\VignetteIndexEntry{dsmSearch}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## Step 1 Get the Spatial Grid with the Metadata of the Dataset
+
+```{r eval = FALSE}
+metadata <- gloBFPr::get_metadata()
+```
+
+## Step 2.1 Retrieve Building Footprints with Heights Using a Bounding Box
+
+Set `out_type = "all"` o return a comprehensive list of outputs, including:
+- `poly`: an `sf` object of building footprints,
+- `binary`: a `terra` raster indicating presence/absence of buildings, and
+- `graduated`: a `terra` raster representing building height.
+
+Specify `cell_size = 1` to generate raster layers with 1-meter resolution, ensuring detailed spatial representation of building geometries within the defined area of interest.
+
+```{r ecal = FALSE}
+buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
+                                           metadata = metadata, out_type = "all", cell_size = 1)
+```
+
+## Step 2.2 Retrieve Building Footprints with Heights Using a Bounding Box
+
+Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
+
+```{r ecal = FALSE}
+buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
+                                           metadata = metadata, out_type = "all", 
+                                           mask = TRUE, cell_size = 1)
+```

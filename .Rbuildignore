@@ -1,0 +1,6 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^.*\.svg$
+^README\.md$
+^\images$
+^\.github$

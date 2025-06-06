@@ -1,0 +1,35 @@
+Package: gloBFPr
+Type: Package
+Title: Access Global Building Height Datasets
+Version: 0.1.0
+Authors@R: c(
+    person(
+      "Xiaohao", "Yang",
+      email = "xiaohaoy111@gmail.com",
+      role = c("aut", "cre", "cph")
+    )
+  )
+Description: Provides tools to access, search, and download global 
+    3D building footprint datasets (3D-GloBFP). The package includes 
+    functions to retrieve metadata, filter by bounding box, and download 
+    building height tiles.
+License: MIT
+URL: https://github.com/billbillbilly/gloBFPr
+BugReports: https://github.com/billbillbilly/gloBFPr/issues
+Encoding: UTF-8
+LazyData: true
+Language: en-US
+Depends: R (>= 4.1)
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+imports:
+  sf,
+  dplyr,
+  httr2,
+  terra
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+VignetteBuilder: knitr,
+                 rmarkdown
