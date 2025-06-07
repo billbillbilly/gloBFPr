@@ -41,6 +41,7 @@
 #' @importFrom httr2 request
 #' @importFrom httr2 req_perform
 #' @importFrom httr2 resp_body_json
+#' @importFrom rlang .data
 #'
 #' @export
 
@@ -99,11 +100,11 @@ get_metadata <- function(test=FALSE) {
           list(
             matrix(
               c(
-                bbox.xmin, bbox.ymin,
-                bbox.xmin, bbox.ymax,
-                bbox.xmax, bbox.ymax,
-                bbox.xmax, bbox.ymin,
-                bbox.xmin, bbox.ymin
+                .data$bbox.xmin, .data$bbox.ymin,
+                .data$bbox.xmin, .data$bbox.ymax,
+                .data$bbox.xmax, .data$bbox.ymax,
+                .data$bbox.xmax, .data$bbox.ymin,
+                .data$bbox.xmin, .data$bbox.ymin
               ),
               ncol = 2,
               byrow = TRUE)

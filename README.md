@@ -91,10 +91,18 @@ of building footprint tiles.
 This implementation relies on the current structure of the dataset as hosted on Figshare.
 It may break if the dataset owner changes the file organization or metadata format.
 
+## Issues and bugs
+If you discover a bug not associated with connection to the API that is
+not already a [reported
+issue](https://github.com/billbillbilly/gloBFPr/issues), please [open
+a new issue](https://github.com/billbillbilly/gloBFPr/issues/new)
+providing a reproducible example.
+
 ## Citation
 
 If you use the 3D-GloBFP dataset, please cite:
 
+```
 Che Yangzi, Li Xuecao, Liu Xiaoping, Wang Yuhao, Liao Weilin, Zheng Xianwei,
 Zhang Xucai, Xu Xiaocong, Shi Qian, Zhu Jiajun, Zhang Honghui, Yuan Hua, &
 Dai Yongjiu (2024). 3D-GloBFP: the first global three-dimensional building
@@ -104,3 +112,4 @@ Che, Y., Li, X., Liu, X., Wang, Y., Liao, W., Zheng, X., Zhang, X., Xu, X.,
 Shi, Q., Zhu, J., Zhang, H., Yuan, H., & Dai, Y. (2025).
 3D-GloBFP: the first global three-dimensional building footprint dataset [Data set].
 Zenodo. https://doi.org/10.5281/zenodo.15487037
+```
