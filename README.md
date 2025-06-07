@@ -15,6 +15,8 @@ building footprint tiles with associated height information, derived from the
 Zenodo and covers global urban areas in shapefile format. The package will look 
 to include more global Building Dataset in the future.
 
+<img src="images/cover.png" align="center" width="90%">
+
 ## Features
 📦 Access tiled metadata of 3D-GloBFP dataset
 
