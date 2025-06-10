@@ -53,6 +53,28 @@ rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height"
 }
 
 #' @noMd
+add_info <- function(projected_poly) {
+  area <- sf::st_area(projected_poly)
+  perimeter <- sf::st_perimeter(projected_poly)
+
+}
+
+#' @noMd
+link_pop <- function(bbox, projected_poly, year) {
+  years <- c(2030, 2025, 2020, 2015, 2010, 2005, 2000, 1995, 1990, 1985, 1980, 1975)
+  if (year %in% years) {
+
+  } else {
+    base::warning(paste0('input year should be within the given years: ',
+                         years,
+                         '. Skip population density information for this time.')
+                  )
+    return(projected_poly)
+  }
+
+}
+
+#' @noMd
 get_utm_crs <- function(bbox) {
   centroid <- sf::st_centroid(sf::st_union(bbox))
   coords <- sf::st_coordinates(centroid)
