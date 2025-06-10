@@ -104,11 +104,17 @@ search_3dglobdf <- function(bbox,
 
   # download and load shapefiles
   result_list <- list()
+  d_mode <- 'auto'
+  # check os
+  os <- Sys.info()[["sysname"]]
+  if (os == "Windows") {
+    d_mode <- 'wb'
+  }
   for (i in seq_len(nrow(intersecting))) {
     temp_zip <- tempfile(fileext = ".zip")
     utils::download.file(intersecting$download_url[i],
                   destfile = temp_zip,
-                  mode = "auto",
+                  mode = d_mode,
                   quiet = TRUE)
 
     unzip_dir <- tempfile()
