@@ -54,24 +54,127 @@ rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height"
 
 #' @noMd
 add_info <- function(projected_poly) {
-  area <- sf::st_area(projected_poly)
-  perimeter <- sf::st_perimeter(projected_poly)
+  #### 2D metrics ####
+  projected_poly$area_2d <- as.numeric(sf::st_area(projected_poly))
+  projected_poly$perimeter <- as.numeric(sf::st_perimeter(projected_poly))
+  # Perimeter-Area Ratio
+  projected_poly$PARA <- projected_poly$perimeter / projected_poly$area_2d
+
+  #### 2.5/3D metrics ####
+  projected_poly$vertical_surface <- projected_poly$perimeter * projected_poly$Height
+  projected_poly$total_surface <- projected_poly$vertical_surface + projected_poly$area_2d
+  projected_poly$volume <- projected_poly$area_2d * projected_poly$Height
+  projected_poly$hemisphericality <- 0
+  for (i in 1:nrow(projected_poly)) {
+    poly_ <- projected_poly[i,]
+    projected_poly$hemisphericality[i] <- cal_hemisphericality(poly_)
+    projected_poly$convexity <- cal_convexity(poly_)
+  }
+  projected_poly$fractality <- 1 - log(projected_poly) / (1.5 * log(projected_poly$total_surface))
+  projected_poly$cuboidness <-
 
 }
 
 #' @noMd
+cal_hemisphericality <- function(poly_) {
+  # minimum_area_rectangle <- sf::st_minimum_rotated_rectangle(poly)
+  # coords_2d <- sf::st_coordinates(minimum_area_rectangle)
+  # coords_2d <- coords_2d[1:4, c("X", "Y")]
+  # pt_1 <- as.vector(c(coords_2d[1,1], coords_2d[1,2]), 0)
+  # pt_2 <- as.vector(c(coords_2d[1,1], coords_2d[1,2]), poly$Height)
+  # pt_3 <- as.vector(c(coords_2d[3,1], coords_2d[3,2]), 0)
+  # delta_1_2 <- pt_1 - pt_2
+  # delta_1_3 <- pt_1 - pt_3
+  # a2 <- delta_1_2[3]^2
+  # b2 <- delta_1_3[1]^2 + delta_1_3[2]^2
+  # radius <- sqrt(a2 + (sqrt(b2)/2)^2)
+  # volume_hemisphere <- pi * radius^3 / 2
+
+  vol_hemisphere <- (2/3) * pi^(-0.5) * poly_$area_2d^(3/2)
+  hemisphericality <- (poly_$volume - vol_hemisphere) / volume_hemisphere
+  return(hemisphericality)
+}
+
+#' @noMd
+cal_convexity <- function(poly_) {
+  vertices <- sf::st_coordinates(poly_)[, 1:2]
+  sf_coords <- sf::st_as_sf(as.data.frame(vertices),
+                            coords = c("X", "Y"),
+                            crs = sf::st_crs(poly_))
+  convex_hull <- sf::st_convex_hull(sf_coords)
+}
+
+#' @noMd
 link_pop <- function(bbox, projected_poly, year) {
+  d_mode <- 'auto'
+  # check os
+  os <- Sys.info()[["sysname"]]
+  if (os == "Windows") {
+    d_mode <- 'wb'
+  }
+  # GHS population grid
   years <- c(2030, 2025, 2020, 2015, 2010, 2005, 2000, 1995, 1990, 1985, 1980, 1975)
+  result_list <- list()
   if (year %in% years) {
+    intersected_tiles <- ghsl_tiles[sf::st_intersects(ghsl_tiles, bbox, sparse = FALSE), ]
+    for (i in seq_len(nrow(intersected_tiles))) {
+      temp_zip <- tempfile(fileext = ".zip")
+      utils::download.file(intersected_tiles$tile_id[i],
+                           destfile = temp_zip,
+                           mode = d_mode,
+                           quiet = TRUE)
+      unzip_dir <- tempfile()
+      utils::unzip(temp_zip, exdir = unzip_dir)
+      tif_files <- list.files(unzip_dir, pattern = "\\.tif$", full.names = TRUE)
+      if (length(tif_files) == 0) next
+      rast_data <- terra::rast(tif_files[1])
+      result_list[[length(result_list) + 1]] <- rast_data
+      unlink(c(temp_zip, unzip_dir), recursive = TRUE)
+    }
+
+    # Combine all into one terra raster object
+    if (length(result_list) == 1) {
+      r <- result_list[[1]]
+    } else if (length(result_list) >= 2 ) {
+
+    }
+
+    # reproject raster
+    utm_crs <- get_utm_crs(bbox)
+    r <- terra::project(r, paste0('EPSG:', utm_crs))
+
+    # calculate population density
+    r <- r / (100*100)
+
+    # use all centroids of projected_poly to extract value from the raster
+    pop_density_df <- terra::extract(r,
+                                     terra::vect(sf::st_centroid(projected_poly)),
+                                     raw = FALSE)
+
+    # link pop_density_df back to projected_poly
 
   } else {
-    base::warning(paste0('input year should be within the given years: ',
+    base::warning(paste0('Input year should be within the given years: ',
                          years,
                          '. Skip population density information for this time.')
                   )
     return(projected_poly)
   }
+  return(projected_poly)
+}
 
+#' @noMd
+get_GHSurl <- function(year, id) {
+  # source: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
+  return(
+    paste0(
+      'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2030_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_POP_E',
+      year,
+      '_GLOBE_R2023A_54009_100_V1_0_',
+      id,
+      '.zip'
+    )
+  )
 }
 
 #' @noMd

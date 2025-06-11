@@ -9,7 +9,9 @@
 #' @param metadata sf. Typically output from [get_metadata()], containing tile
 #' extents and download URLs.
 #' @param crop logical. If `TRUE`, the resulting building footprint geometries
-#' will be cropped to the input `bbox`. Default is `TRUE`.
+#' will be cropped to the input `bbox`. Default is `FALSE`.
+#' @param mask logical. If `TRUE`, the resulting building footprint geometries
+#' will be masked to the input `bbox`. Default is `TRUE`.
 #' @param out_type character. Default is `'poly'`.
 #' Output type(s) to return. Options include:
 #'   \itemize{
@@ -19,11 +21,11 @@
 #'     \item `"rast"`: a named list with both binary and graduated rasters.
 #'     \item `"all"`: a named list including the polygon layer and both raster layers.
 #'   }
-#' @param mask logical (optional). Default is `FALSE`. If `TRUE`, masks the
-#' graduated raster using the building footprint layer. Only used when `out_type`
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
 #' @param cell_size numeric (optional). Default is 1. Only used when `out_type`
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
+#' @param shape_metrics logical.
+#' @param social_metrics logical.
 #'
 #' @return Varies based on `out_type`:
 #' \itemize{
@@ -31,7 +33,7 @@
 #'   \item If `"binary_rast"`: a binary `SpatRaster` (`terra`) indicating building presence.
 #'   \item If `"graduated_rast"`: a quantitative `SpatRaster` of building heights.
 #'   \item If `"rast"`: a named list with two `SpatRaster` objects: `binary` and `graduated`.
-#'   \item If `"all"`: a named list with `poly` (sf), `binary`, and `graduated` rasters.
+#'   \item If `"all"`: a named list with `poly` (sf), `binary`, and `graduated` (raster).
 #' }
 #'
 #' @note
@@ -65,9 +67,9 @@
 
 search_3dglobdf <- function(bbox,
                             metadata,
-                            crop=TRUE,
+                            crop=FALSE,
+                            mask=TRUE,
                             out_type='poly',
-                            mask=FALSE,
                             cell_size=1) {
   if (missing(bbox) || missing(metadata)) {
     stop('bbox or metadata is missing')
