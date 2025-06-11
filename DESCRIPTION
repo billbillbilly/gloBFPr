@@ -32,7 +32,8 @@ Imports:
     terra,
     utils,
     lwgeom,
-    rlang
+    rlang,
+    cli
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 VignetteBuilder: knitr, rmarkdown
