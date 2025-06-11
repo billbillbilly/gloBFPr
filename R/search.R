@@ -9,7 +9,7 @@
 #' @param metadata sf. Typically output from [get_metadata()], containing tile
 #' extents and download URLs.
 #' @param crop logical. If `TRUE`, the resulting building footprint geometries
-#' will be cropped to the input `bbox`. Default is `TRUE`.
+#' will be cropped to the input `bbox`. Default is `FALSE`.
 #' @param out_type character. Default is `'poly'`.
 #' Output type(s) to return. Options include:
 #'   \itemize{
@@ -55,17 +55,18 @@
 #' @importFrom sf st_bbox
 #' @importFrom sf st_read
 #' @importFrom sf st_crop
-#' @importFrom sf st_cast
-#' @importFrom sf st_is_valid
 #' @importFrom sf st_intersects
 #' @importFrom utils download.file
 #' @importFrom utils unzip
+#' @importFrom dplyr bind_rows
+#' @importFrom cli cli_alert_info
+#' @importFrom cli cli_alert_success
 #'
 #' @export
 
 search_3dglobdf <- function(bbox,
                             metadata,
-                            crop=TRUE,
+                            crop=FALSE,
                             out_type='poly',
                             mask=FALSE,
                             cell_size=1) {
@@ -110,6 +111,7 @@ search_3dglobdf <- function(bbox,
   if (os == "Windows") {
     d_mode <- 'wb'
   }
+  cli::cli_alert_info('Start downloading data ...')
   for (i in seq_len(nrow(intersecting))) {
     temp_zip <- tempfile(fileext = ".zip")
     utils::download.file(intersecting$download_url[i],
@@ -130,24 +132,32 @@ search_3dglobdf <- function(bbox,
       base::message("Failed to read shapefile: ", shp_files[1])
       return(NULL)
     })
-    sf_data <- sf::st_cast(sf_data, "POLYGON")
 
     if (!is.null(sf_data)) {
       result_list[[length(result_list) + 1]] <- sf_data
     }
     unlink(c(temp_zip, unzip_dir), recursive = TRUE)
   }
-
+  cli::cli_alert_success('Finished downloading')
+  result_list <- lapply(result_list, function(x) {
+    #x <- sf::st_cast(x, "POLYGON")  # ensure same geometry type
+    x <- x[, intersect(names(x), names(result_list[[1]]))]  # keep common columns only
+    return(x)
+  })
   # Combine all into one sf object
-  all_data <- do.call(rbind, result_list)
+  all_data <- dplyr::bind_rows(result_list)
 
+  utm_crs <- get_utm_crs(bbox)
+  bbox_proj <- sf::st_transform(bbox, crs = utm_crs)
+  all_data <- sf::st_transform(all_data, crs = utm_crs)
+  # sf_data <- sf_data[!sf::st_is_empty(sf_data), ]
+  all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox_proj, sparse = FALSE), ])
+  cli::cli_alert_success('Found building footprints within bbox')
   # crop the data if 'crop' == true
   if (crop) {
-    # all_data <- sf::st_make_valid(all_data)
-    valid <- sf::st_is_valid(all_data)
-    all_data <- all_data[valid, ]
-    all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
-    all_data <- suppressWarnings(sf::st_crop(all_data, bbox))
+    #all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
+    all_data <- suppressWarnings(sf::st_crop(all_data, bbox_proj))
+    cli::cli_alert_success('Cropped building footprints using bbox')
   }
 
   # export data as sf polygons
@@ -158,10 +168,13 @@ search_3dglobdf <- function(bbox,
   # auto-generate raster outputs
   if (out_type %in% c("binary_rast", "graduated_rast", "rast", "all")) {
     binary <- rasterize_binary(all_data, bbox, res=cell_size)
+    cli::cli_alert_success('Generated binary building footprints raster')
     if (isTRUE(mask)) {
       graduated <- rasterize_height(all_data, bbox, res=cell_size, mask=binary)
+      cli::cli_alert_success('Masked binary building footprints raster')
     } else {
       graduated <- rasterize_height(all_data, bbox, res=cell_size)
+      cli::cli_alert_success('Generated building height raster')
     }
 
     if (out_type == "binary_rast") {return(binary)}

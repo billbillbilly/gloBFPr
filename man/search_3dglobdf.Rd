@@ -7,7 +7,7 @@
 search_3dglobdf(
   bbox,
   metadata,
-  crop = TRUE,
+  crop = FALSE,
   out_type = "poly",
   mask = FALSE,
   cell_size = 1

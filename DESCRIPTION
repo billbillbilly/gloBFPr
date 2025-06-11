@@ -1,7 +1,7 @@
 Package: gloBFPr
 Type: Package
 Title: Access Global Building Height Datasets
-Version: 0.1.1
+Version: 0.1.3
 Authors@R: c(
     person(
       given = "Xiaohao",
@@ -31,6 +31,7 @@ Imports:
     httr2,
     terra,
     utils,
+    lwgeom,
     rlang
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
