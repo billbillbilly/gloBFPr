@@ -7,8 +7,8 @@
 #' @importFrom sf st_centroid
 #' @importFrom sf st_coordinates
 #' @importFrom sf st_transform
-#' @importFrom sf st_crs
-#' @importFrom sf st_as_sfc
+#' @importFrom sf st_crs st_convex_hull
+#' @importFrom sf st_as_sfc st_multipoint
 
 #' @noMd
 rasterize_binary <- function(poly, bbox, res) {
@@ -53,26 +53,33 @@ rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height"
 }
 
 #' @noMd
-add_info <- function(projected_poly) {
-  #### 2D metrics ####
-  projected_poly$area_2d <- as.numeric(sf::st_area(projected_poly))
-  projected_poly$perimeter <- as.numeric(sf::st_perimeter(projected_poly))
-  # Perimeter-Area Ratio
-  projected_poly$PARA <- projected_poly$perimeter / projected_poly$area_2d
+add_2d_3d <- function(projected_poly, type) {
+  if (type == '2d' || type == 'all') {
+    #### 2D metrics ####
+    projected_poly$area_2d <- as.numeric(sf::st_area(projected_poly))
+    projected_poly$perimeter <- as.numeric(sf::st_perimeter(projected_poly))
+    # Perimeter-Area Ratio
+    projected_poly$PARA <- projected_poly$perimeter / projected_poly$area_2d
+    projected_poly$rectangularity <- projected_poly$area_2d / sf::st_area(sf::st_minimum_rotated_rectangle(projected_poly))
+  } else if (type == '3d' || type == 'all') {
+    #### 3D metrics ####
+    projected_poly$vertical_surface <- projected_poly$perimeter * projected_poly$Height
+    projected_poly$total_surface <- projected_poly$vertical_surface + projected_poly$area_2d
+    projected_poly$volume <- projected_poly$area_2d * projected_poly$Height
+    projected_poly$hemisphericality <- 0
+    projected_poly$convexity <- 0
+    projected_poly$cuboidness <- 0
+    for (i in 1:nrow(projected_poly)) {
+      poly_ <- projected_poly[i,]
+      projected_poly$hemisphericality[i] <- cal_hemisphericality(poly_)
+      projected_poly$convexity[i] <- cal_convexity(poly_)
+      projected_poly$cuboidness[i] <- cal_cuboidness(poly_)
+    }
+    projected_poly$fractality <- 1 - log(projected_poly) / (1.5 * log(projected_poly$total_surface))
 
-  #### 2.5/3D metrics ####
-  projected_poly$vertical_surface <- projected_poly$perimeter * projected_poly$Height
-  projected_poly$total_surface <- projected_poly$vertical_surface + projected_poly$area_2d
-  projected_poly$volume <- projected_poly$area_2d * projected_poly$Height
-  projected_poly$hemisphericality <- 0
-  for (i in 1:nrow(projected_poly)) {
-    poly_ <- projected_poly[i,]
-    projected_poly$hemisphericality[i] <- cal_hemisphericality(poly_)
-    projected_poly$convexity <- cal_convexity(poly_)
+  } else {
+    return(projected_poly)
   }
-  projected_poly$fractality <- 1 - log(projected_poly) / (1.5 * log(projected_poly$total_surface))
-  projected_poly$cuboidness <-
-
 }
 
 #' @noMd
@@ -98,14 +105,16 @@ cal_hemisphericality <- function(poly_) {
 #' @noMd
 cal_convexity <- function(poly_) {
   vertices <- sf::st_coordinates(poly_)[, 1:2]
-  sf_coords <- sf::st_as_sf(as.data.frame(vertices),
-                            coords = c("X", "Y"),
-                            crs = sf::st_crs(poly_))
-  convex_hull <- sf::st_convex_hull(sf_coords)
+  multipoint <- sf::st_multipoint(vertices)
+  multipoint <- sf::st_sfc(multipoint, crs = sf::st_crs(poly_))
+  return(sf::st_convex_hull(multipoint))
 }
 
 #' @noMd
-link_pop <- function(bbox, projected_poly, year) {
+
+
+#' @noMd
+add_pop <- function(bbox, projected_poly, year) {
   d_mode <- 'auto'
   # check os
   os <- Sys.info()[["sysname"]]
@@ -132,12 +141,13 @@ link_pop <- function(bbox, projected_poly, year) {
       unlink(c(temp_zip, unzip_dir), recursive = TRUE)
     }
 
-    # Combine all into one terra raster object
-    if (length(result_list) == 1) {
-      r <- result_list[[1]]
-    } else if (length(result_list) >= 2 ) {
-
+    if (length(result_list) == 0) {
+      base::warning("No population rasters downloaded. Returning original polygons.")
+      return(projected_poly)
     }
+
+    # Combine all into one terra raster object
+    r <- if (length(result_list) == 1) result_list[[1]] else do.call(terra::merge, result_list)
 
     # reproject raster
     utm_crs <- get_utm_crs(bbox)
@@ -149,15 +159,13 @@ link_pop <- function(bbox, projected_poly, year) {
     # use all centroids of projected_poly to extract value from the raster
     pop_density_df <- terra::extract(r,
                                      terra::vect(sf::st_centroid(projected_poly)),
-                                     raw = FALSE)
-
+                                     raw = FALSE,
+                                     ID = FALSE)
     # link pop_density_df back to projected_poly
+    projected_poly$pop_density <- pop_density_df[[1]]
 
   } else {
-    base::warning(paste0('Input year should be within the given years: ',
-                         years,
-                         '. Skip population density information for this time.')
-                  )
+    base::warning(sprintf("Input year %d is not in allowed range. Skipping.", year))
     return(projected_poly)
   }
   return(projected_poly)
@@ -176,6 +184,9 @@ get_GHSurl <- function(year, id) {
     )
   )
 }
+
+#' @noMd
+
 
 #' @noMd
 get_utm_crs <- function(bbox) {

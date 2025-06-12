@@ -1,17 +1,19 @@
+
 #' search_3dglobdf
 #' @description
 #' Search and retrieve 3D-GloBFP tiles that intersect a given bounding box or
-#' area of interest, with options to return vector or raster outputs including
+#' area of interest (a city), with options to return vector or raster outputs including
 #' building polygons, binary presence rasters, and height-coded rasters.
 #'
 #' @param bbox `sf`, `sfc`, or a numeric vector (xmin, ymin, xmax, ymax)
-#' defining the area of interest.
+#' defining the area of interest. This can be ignored if `place` is specified.
+#' @param place vector (optional). A single line address,
+#' e.g. ("1600 Pennsylvania Ave NW, Washington") or a vector of addresses
+#' (c("Madrid", "Barcelona")).
 #' @param metadata sf. Typically output from [get_metadata()], containing tile
 #' extents and download URLs.
 #' @param crop logical. If `TRUE`, the resulting building footprint geometries
 #' will be cropped to the input `bbox`. Default is `FALSE`.
-#' @param mask logical. If `TRUE`, the resulting building footprint geometries
-#' will be masked to the input `bbox`. Default is `TRUE`.
 #' @param out_type character. Default is `'poly'`.
 #' Output type(s) to return. Options include:
 #'   \itemize{
@@ -21,11 +23,11 @@
 #'     \item `"rast"`: a named list with both binary and graduated rasters.
 #'     \item `"all"`: a named list including the polygon layer and both raster layers.
 #'   }
+#' @param mask logical (optional). Default is `FALSE`. If `TRUE`, masks the
+#' graduated raster using the building footprint layer. Only used when `out_type`
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
 #' @param cell_size numeric (optional). Default is 1. Only used when `out_type`
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
-#' @param shape_metrics logical.
-#' @param social_metrics logical.
 #'
 #' @return Varies based on `out_type`:
 #' \itemize{
@@ -33,7 +35,7 @@
 #'   \item If `"binary_rast"`: a binary `SpatRaster` (`terra`) indicating building presence.
 #'   \item If `"graduated_rast"`: a quantitative `SpatRaster` of building heights.
 #'   \item If `"rast"`: a named list with two `SpatRaster` objects: `binary` and `graduated`.
-#'   \item If `"all"`: a named list with `poly` (sf), `binary`, and `graduated` (raster).
+#'   \item If `"all"`: a named list with `poly` (sf), `binary`, and `graduated` rasters.
 #' }
 #'
 #' @note
@@ -57,40 +59,55 @@
 #' @importFrom sf st_bbox
 #' @importFrom sf st_read
 #' @importFrom sf st_crop
-#' @importFrom sf st_cast
-#' @importFrom sf st_is_valid
 #' @importFrom sf st_intersects
 #' @importFrom utils download.file
 #' @importFrom utils unzip
+#' @importFrom dplyr bind_rows
+#' @importFrom cli cli_alert_info
+#' @importFrom cli cli_alert_success
+#' @importFrom nominatimlite geo_lite_sf
 #'
 #' @export
 
-search_3dglobdf <- function(bbox,
+search_3dglobdf <- function(bbox=NULL,
+                            place=NULL,
                             metadata,
                             crop=FALSE,
-                            mask=TRUE,
                             out_type='poly',
+                            mask=FALSE,
                             cell_size=1) {
-  if (missing(bbox) || missing(metadata)) {
-    stop('bbox or metadata is missing')
+  if (inherits(bbox, 'NULL') && inherits(place, 'NULL')) {
+    base::warning('Area of interest is missing: boox or place')
+    return(NULL)
+  }
+
+  if (missing(metadata)) {
+    base::warning('metadata is missing')
+    return(NULL)
   }
 
   if (inherits(metadata, "NULL")) {
     return(NULL)
   }
 
-  # check type of bbox
-  if (is.numeric(bbox) && length(bbox) == 4) {
-    # convert bbox to sf when it is not a sf polygon
-    bbox <- sf::st_as_sfc(
-      sf::st_bbox(
-        c(xmin = bbox[1],
-          ymin = bbox[2],
-          xmax = bbox[3],
-          ymax = bbox[4]),
-        crs = 4326
+  if ((inherits(bbox, 'NULL') && !inherits(place, 'NULL')) || (!inherits(bbox, 'NULL') && !inherits(place, 'NULL'))) {
+    city <- nominatimlite::geo_lite_sf(place, points_only = FALSE)
+    city <- sf::st_transform(city, crs = 4326)
+    bbox <- city$geometry
+  } else if (!inherits(bbox, 'NULL') && inherits(place, 'NULL') ) {
+    # check type of bbox
+    if (is.numeric(bbox) && length(bbox) == 4) {
+      # convert bbox to sf when it is not a sf polygon
+      bbox <- sf::st_as_sfc(
+        sf::st_bbox(
+          c(xmin = bbox[1],
+            ymin = bbox[2],
+            xmax = bbox[3],
+            ymax = bbox[4]),
+          crs = 4326
+        )
       )
-    )
+    }
   }
 
   # Ensure input is in WGS84
@@ -112,12 +129,13 @@ search_3dglobdf <- function(bbox,
   if (os == "Windows") {
     d_mode <- 'wb'
   }
+  cli::cli_alert_info('Start downloading data ...')
   for (i in seq_len(nrow(intersecting))) {
     temp_zip <- tempfile(fileext = ".zip")
     utils::download.file(intersecting$download_url[i],
-                  destfile = temp_zip,
-                  mode = d_mode,
-                  quiet = TRUE)
+                         destfile = temp_zip,
+                         mode = d_mode,
+                         quiet = TRUE)
 
     unzip_dir <- tempfile()
     utils::unzip(temp_zip, exdir = unzip_dir)
@@ -132,24 +150,32 @@ search_3dglobdf <- function(bbox,
       base::message("Failed to read shapefile: ", shp_files[1])
       return(NULL)
     })
-    sf_data <- sf::st_cast(sf_data, "POLYGON")
 
     if (!is.null(sf_data)) {
       result_list[[length(result_list) + 1]] <- sf_data
     }
     unlink(c(temp_zip, unzip_dir), recursive = TRUE)
   }
-
+  cli::cli_alert_success('Finished downloading')
+  result_list <- lapply(result_list, function(x) {
+    #x <- sf::st_cast(x, "POLYGON")  # ensure same geometry type
+    x <- x[, intersect(names(x), names(result_list[[1]]))]  # keep common columns only
+    return(x)
+  })
   # Combine all into one sf object
-  all_data <- do.call(rbind, result_list)
+  all_data <- dplyr::bind_rows(result_list)
 
+  utm_crs <- get_utm_crs(bbox)
+  bbox_proj <- sf::st_transform(bbox, crs = utm_crs)
+  all_data <- sf::st_transform(all_data, crs = utm_crs)
+  # sf_data <- sf_data[!sf::st_is_empty(sf_data), ]
+  all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox_proj, sparse = FALSE), ])
+  cli::cli_alert_success('Found building footprints within bbox')
   # crop the data if 'crop' == true
   if (crop) {
-    # all_data <- sf::st_make_valid(all_data)
-    valid <- sf::st_is_valid(all_data)
-    all_data <- all_data[valid, ]
-    all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
-    all_data <- suppressWarnings(sf::st_crop(all_data, bbox))
+    #all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
+    all_data <- suppressWarnings(sf::st_crop(all_data, bbox_proj))
+    cli::cli_alert_success('Cropped building footprints using bbox')
   }
 
   # export data as sf polygons
@@ -160,10 +186,13 @@ search_3dglobdf <- function(bbox,
   # auto-generate raster outputs
   if (out_type %in% c("binary_rast", "graduated_rast", "rast", "all")) {
     binary <- rasterize_binary(all_data, bbox, res=cell_size)
+    cli::cli_alert_success('Generated binary building footprints raster')
     if (isTRUE(mask)) {
       graduated <- rasterize_height(all_data, bbox, res=cell_size, mask=binary)
+      cli::cli_alert_success('Masked binary building footprints raster')
     } else {
       graduated <- rasterize_height(all_data, bbox, res=cell_size)
+      cli::cli_alert_success('Generated building height raster')
     }
 
     if (out_type == "binary_rast") {return(binary)}

@@ -95,6 +95,10 @@ It may break if the dataset owner changes the file organization or metadata form
 
 Please read the function documentation carefully. The dataset may require proper citation when used.
 
+## Other approaches
+- [overturemapsr]()
+- [3DBM](https://github.com/tudelft3d/3d-building-metrics): Elevating geometric analysis for urban morphology
+
 ## Issues and bugs
 If you discover a bug not associated with connection to the API that is
 not already a [reported

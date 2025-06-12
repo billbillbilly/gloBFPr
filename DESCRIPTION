@@ -32,7 +32,10 @@ Imports:
     httr2,
     terra,
     utils,
-    rlang
+    lwgeom,
+    rlang,
+    cli,
+    nominatimlite
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 VignetteBuilder: knitr, rmarkdown
