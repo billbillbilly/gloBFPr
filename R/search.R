@@ -78,6 +78,8 @@ search_3dglobdf <- function(bbox,
     return(NULL)
   }
 
+  start_time <- Sys.time()
+
   # check type of bbox
   if (is.numeric(bbox) && length(bbox) == 4) {
     # convert bbox to sf when it is not a sf polygon
@@ -111,11 +113,17 @@ search_3dglobdf <- function(bbox,
   if (os == "Windows") {
     d_mode <- 'wb'
   }
+
   cli::cli_alert_info('Start downloading data ...')
+  # Store the original 'timeout' option and ensure it's reset upon function exit
+  original_timeout <- getOption('timeout')
+  on.exit(options(timeout = original_timeout), add = TRUE)
+  options(timeout=9999)
   for (i in seq_len(nrow(intersecting))) {
     temp_zip <- tempfile(fileext = ".zip")
     utils::download.file(intersecting$download_url[i],
                   destfile = temp_zip,
+                  # method = method,
                   mode = d_mode,
                   quiet = TRUE)
 
@@ -138,7 +146,8 @@ search_3dglobdf <- function(bbox,
     }
     unlink(c(temp_zip, unzip_dir), recursive = TRUE)
   }
-  cli::cli_alert_success('Finished downloading')
+  cli::cli_alert_success('Finished downloading and loading')
+  cli::cli_alert_info('Start processing data ...')
   result_list <- lapply(result_list, function(x) {
     #x <- sf::st_cast(x, "POLYGON")  # ensure same geometry type
     x <- x[, intersect(names(x), names(result_list[[1]]))]  # keep common columns only
@@ -146,6 +155,7 @@ search_3dglobdf <- function(bbox,
   })
   # Combine all into one sf object
   all_data <- dplyr::bind_rows(result_list)
+  all_data <- all_data[,c('Height','geometry')]
 
   utm_crs <- get_utm_crs(bbox)
   bbox_proj <- sf::st_transform(bbox, crs = utm_crs)
@@ -156,31 +166,61 @@ search_3dglobdf <- function(bbox,
   # crop the data if 'crop' == true
   if (crop) {
     #all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
+    cli::cli_alert_info('Start cropping data ...')
     all_data <- suppressWarnings(sf::st_crop(all_data, bbox_proj))
     cli::cli_alert_success('Cropped building footprints using bbox')
   }
 
   # export data as sf polygons
   if(out_type == 'poly') {
+    end_time <- Sys.time()
+    process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+    cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time), " seconds."))
     return(all_data)
   }
 
   # auto-generate raster outputs
   if (out_type %in% c("binary_rast", "graduated_rast", "rast", "all")) {
-    binary <- rasterize_binary(all_data, bbox, res=cell_size)
-    cli::cli_alert_success('Generated binary building footprints raster')
-    if (isTRUE(mask)) {
+    if (isTRUE(mask) || out_type == 'binary_rast' || out_type == 'all') {
+      cli::cli_alert_info('Generate binary raster ...')
+      binary <- rasterize_binary(all_data, bbox, res=cell_size)
+      cli::cli_alert_success('Generated binary building footprints raster')
+    }
+
+    if (isTRUE(mask) && out_type != "binary_rast") {
+      cli::cli_alert_info('Mask building height raster ...')
       graduated <- rasterize_height(all_data, bbox, res=cell_size, mask=binary)
-      cli::cli_alert_success('Masked binary building footprints raster')
+      cli::cli_alert_success('Generated masked building footprints raster')
     } else {
+      cli::cli_alert_info('Generate binary raster ...')
       graduated <- rasterize_height(all_data, bbox, res=cell_size)
       cli::cli_alert_success('Generated building height raster')
     }
 
-    if (out_type == "binary_rast") {return(binary)}
-    if (out_type == "graduated_rast") {return(graduated)}
-    if (out_type == "rast") {return(list(binary = binary, graduated = graduated))}
-    if (out_type == "all") {return(list(poly = all_data, binary = binary, graduated = graduated))}
+    if (out_type == "binary_rast") {
+      end_time <- Sys.time()
+      process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time), " seconds."))
+      return(binary)
+    }
+    if (out_type == "graduated_rast") {
+      end_time <- Sys.time()
+      process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time), " seconds."))
+      return(graduated)
+    }
+    if (out_type == "rast") {
+      end_time <- Sys.time()
+      process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time), " seconds."))
+      return(list(binary = binary, graduated = graduated))
+    }
+    if (out_type == "all") {
+      end_time <- Sys.time()
+      process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time), " seconds."))
+      return(list(poly = all_data, binary = binary, graduated = graduated))
+    }
   }
 
   stop("Invalid out_type specified.")

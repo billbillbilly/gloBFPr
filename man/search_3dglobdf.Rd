@@ -21,7 +21,7 @@ defining the area of interest.}
 extents and download URLs.}
 
 \item{crop}{logical. If \code{TRUE}, the resulting building footprint geometries
-will be cropped to the input \code{bbox}. Default is \code{TRUE}.}
+will be cropped to the input \code{bbox}. Default is \code{FALSE}.}
 
 \item{out_type}{character. Default is \code{'poly'}.
 Output type(s) to return. Options include:
