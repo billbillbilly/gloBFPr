@@ -10,6 +10,7 @@
 #' @importFrom sf st_crs st_convex_hull
 #' @importFrom sf st_as_sfc st_multipoint
 
+#### Footprint data processing ####
 #' @noMd
 rasterize_binary <- function(poly, bbox, res) {
   utm_crs <- get_utm_crs(bbox)
@@ -52,34 +53,46 @@ rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height"
   return(graduated)
 }
 
-#' @noMd
-add_2d_3d <- function(projected_poly, type) {
-  if (type == '2d' || type == 'all') {
-    #### 2D metrics ####
-    projected_poly$area_2d <- as.numeric(sf::st_area(projected_poly))
-    projected_poly$perimeter <- as.numeric(sf::st_perimeter(projected_poly))
-    # Perimeter-Area Ratio
-    projected_poly$PARA <- projected_poly$perimeter / projected_poly$area_2d
-    projected_poly$rectangularity <- projected_poly$area_2d / sf::st_area(sf::st_minimum_rotated_rectangle(projected_poly))
-  } else if (type == '3d' || type == 'all') {
-    #### 3D metrics ####
-    projected_poly$vertical_surface <- projected_poly$perimeter * projected_poly$Height
-    projected_poly$total_surface <- projected_poly$vertical_surface + projected_poly$area_2d
-    projected_poly$volume <- projected_poly$area_2d * projected_poly$Height
-    projected_poly$hemisphericality <- 0
-    projected_poly$convexity <- 0
-    projected_poly$cuboidness <- 0
-    for (i in 1:nrow(projected_poly)) {
-      poly_ <- projected_poly[i,]
-      projected_poly$hemisphericality[i] <- cal_hemisphericality(poly_)
-      projected_poly$convexity[i] <- cal_convexity(poly_)
-      projected_poly$cuboidness[i] <- cal_cuboidness(poly_)
-    }
-    projected_poly$fractality <- 1 - log(projected_poly) / (1.5 * log(projected_poly$total_surface))
+#### Metrics calculation ####
 
-  } else {
-    return(projected_poly)
+#' @noMd
+add_mph <- function(projected_poly, type) {
+  #### Stats ####
+  projected_poly$ground_vertex_count <- nrow(sf::st_coordinates(projected_poly)) - 1
+
+  #### Properties ####
+  projected_poly$ground_area <- as.numeric(sf::st_area(projected_poly))
+  projected_poly$perimeter <- as.numeric(sf::st_perimeter(projected_poly))
+  projected_poly$vertical_surface <- projected_poly$perimeter * projected_poly$Height
+  projected_poly$total_surface <- projected_poly$vertical_surface + projected_poly$ground_area
+  projected_poly$actual_volume <- projected_poly$ground_area * projected_poly$Height
+  projected_poly$oobb_volume <- sf::st_area(sf::st_minimum_rotated_rectangle(projected_poly)) * projected_poly$Height
+
+  #### Indices ####
+  projected_poly$squareness <- projected_poly$perimeter / projected_poly$ground_area # Perimeter-Area Ratio
+  projected_poly$rectangularity <- projected_poly$ground_area / sf::st_area(sf::st_minimum_rotated_rectangle(projected_poly))
+  projected_poly$fractality <- 1 - log(projected_poly) / (1.5 * log(projected_poly$total_surface))
+  projected_poly$hemisphericality <- 0
+  projected_poly$convexity <- 0
+  projected_poly$cuboidness <- 0
+  projected_poly$med <- 0
+  projected_poly$mpd <- 0
+  projected_poly$vol_exch <- 0
+  projected_poly$elo_short <- 0
+  projected_poly$elo_long <- 0
+  for (i in 1:nrow(projected_poly)) {
+    poly_ <- projected_poly[i,]
+    projected_poly$hemisphericality[i] <- cal_hemisphericality(poly_)
+    projected_poly$convexity[i] <- cal_convexity(poly_)
+    projected_poly$cuboidness[i] <- cal_cuboidness(poly_)
+    projected_poly$med[i] <- cal_accessibility(poly_)
+    projected_poly$mpd[i] <- cal_mean_pairwise_distance(poly_)
+    projected_poly$vol_exch[i] <- cal_volume_exchange_ratio(poly_)
+    elongation_ratios <- cal_elongation_ratios(poly_)
+    projected_poly$elo_short[i] <- elongation_ratios[[1]]
+    projected_poly$elo_long[i] <- elongation_ratios[[2]]
   }
+  return(projected_poly)
 }
 
 #' @noMd
@@ -97,8 +110,8 @@ cal_hemisphericality <- function(poly_) {
   # radius <- sqrt(a2 + (sqrt(b2)/2)^2)
   # volume_hemisphere <- pi * radius^3 / 2
 
-  vol_hemisphere <- (2/3) * pi^(-0.5) * poly_$area_2d^(3/2)
-  hemisphericality <- (poly_$volume - vol_hemisphere) / volume_hemisphere
+  vol_hemisphere <- (2/3) * pi^(-0.5) * poly_$ground_area^(3/2)
+  hemisphericality <- (poly_$actual_volume - vol_hemisphere) / vol_hemisphere
   return(hemisphericality)
 }
 
@@ -107,14 +120,128 @@ cal_convexity <- function(poly_) {
   vertices <- sf::st_coordinates(poly_)[, 1:2]
   multipoint <- sf::st_multipoint(vertices)
   multipoint <- sf::st_sfc(multipoint, crs = sf::st_crs(poly_))
-  return(sf::st_convex_hull(multipoint))
+  convex_hull <- sf::st_convex_hull(multipoint)
+  return(poly_$ground_area / sf::st_area(convex_hull))
 }
 
 #' @noMd
+cal_mean_accessibility <- function(poly_) {
+  # create a 3D voxel grid
+  filtered_grid <- ploy2grid(poly_)
+  # compute centroid of the volume
+  centroid_x <- mean(filtered_grid$X)
+  centroid_y <- mean(filtered_grid$Y)
+  centroid_z <- mean(filtered_grid$Z)
 
+  # compute mean Euclidean distance to the centroid
+  dists <- sqrt((filtered_grid$X - centroid_x)^2 +
+                  (filtered_grid$Y - centroid_y)^2 +
+                  (filtered_grid$Z - centroid_z)^2)
+  return(mean(dists))
+}
+
+#' @noMd
+cal_mean_pairwise_distance <- function(poly_) {
+  # create a 3D voxel grid
+  filtered_grid <- ploy2grid(poly_)
+ # Compute all pairwise distances
+  coords <- as.matrix(filtered_grid)
+  n <- nrow(coords)
+
+  total_dist <- 0
+  count <- 0
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      d <- sqrt(sum((coords[i, ] - coords[j, ])^2))
+      total_dist <- total_dist + d
+      count <- count + 1
+    }
+  }
+  return(total_dist / count)
+}
+
+#' @noMd
+cal_volume_exchange_ratio <- function(poly_) {
+  # Get volume of minimum enclosing sphere
+  coords <- sf::st_coordinates(sf::st_convex_hull(poly_))[, 1:2]
+  center <- base::colMeans(coords)
+  radii <- sqrt(base::rowSums((coords - matrix(center, nrow(coords), 2, byrow = TRUE))^2))
+  radius <- max(radii)
+  vol_sphere <- (4/3) * pi * radius^3
+  # Compute deviation
+  vol_exch <- (vol_sphere - poly_$actual_volume) / vol_sphere
+  return(vol_exch)
+}
+
+#' @noMd
+ploy2grid <- function(poly_) {
+  height <- poly_$Height
+  bbox_ <- sf::st_bbox(poly_)
+  dx <- dy <- 2  # horizontal spacing
+  dz <- 2        # vertical spacing
+  x_seq <- seq(bbox["xmin"], bbox["xmax"], by = dx)
+  y_seq <- seq(bbox["ymin"], bbox["ymax"], by = dy)
+  z_seq <- seq(0, height, by = dz)
+  grid_3d <- expand.grid(X = x_seq, Y = y_seq, Z = z_seq)
+  # keep only points that fall inside the footprint (x, y only)
+  xy_points <- sf::st_as_sf(grid_3d, coords = c("X", "Y"), crs = st_crs(poly))
+  inside <- sf::st_within(xy_points, poly_, sparse = FALSE)[, 1]
+  filtered_grid <- grid_3d[inside, ]
+  return(filtered_grid)
+}
+
+"  double mean_pairwise_distance(Rcpp::NumericMatrix coords) {
+    int n = coords.nrow();
+    int dim = coords.ncol();
+    double total_dist = 0.0;
+    long count = 0;
+
+    for (int i = 0; i < n - 1; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        double d = 0.0;
+        for (int k = 0; k < dim; ++k) {
+          double diff = coords(i, k) - coords(j, k);
+          d += diff * diff;
+        }
+        total_dist += std::sqrt(d);
+        count += 1;
+      }
+    }
+
+    return total_dist / count;
+  }
+"
+
+cal_elongation_ratios <- function(poly_) {
+  # Compute minimum bounding rectangle
+  min_rect <- sf::st_minimum_rotated_rectangle(poly_)
+  coords <- sf::st_coordinates(min_rect)[, 1:2]
+
+  # Get edge lengths
+  edges <- sqrt(base::rowSums((coords - coords[c(2:5, 1), ])^2))
+  lengths <- sort(unique(round(edges, 8)))  # may have duplicate lengths due to rectangle
+
+  # Assign shortest and longest edge
+  S <- lengths[1]
+  L <- lengths[length(lengths)]
+
+  # Use height attribute
+  H <- poly_$Height
+
+  # Compute elongation ratios
+  ratio_short <- S / H
+  ratio_long <- L / H
+
+  return(list(ratio_short, ratio_long))
+}
+
+add_neighbor  <- function(projected_poly) {
+  centroids <- sf::st_centroid(projected_poly)
+}
 
 #' @noMd
 add_pop <- function(bbox, projected_poly, year) {
+  bbox <- sf::st_transform(bbox, crs = 4326)
   d_mode <- 'auto'
   # check os
   os <- Sys.info()[["sysname"]]
@@ -185,9 +312,7 @@ get_GHSurl <- function(year, id) {
   )
 }
 
-#' @noMd
-
-
+#### Projection tools ####
 #' @noMd
 get_utm_crs <- function(bbox) {
   centroid <- sf::st_centroid(sf::st_union(bbox))

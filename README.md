@@ -18,17 +18,11 @@ to include more global Building Dataset in the future.
 <img src="images/cover.png" align="center" width="90%">
 
 ## Features
-📦 Access tiled metadata of 3D-GloBFP dataset
+🔍 Access tiled metadata of 3D-GloBFP dataset and search tiles by bounding box (BBOX) or area of interest
 
-🔍 Search tiles by bounding box (BBOX) or area of interest
+⬇️ Download only the necessary files and retrieve building polygons and height attribute
 
-⬇️ Download only the necessary files
-
-🏗️ Retrieve building polygons and height attributes
-
-🌍 Generate rasters of binary presence or graduated height
-
-🗺️ Output spatial data in sf or terra raster format
+🌍 Generate rasters of binary presence or graduated height and output spatial data in sf or terra raster forma
 
 ## Installation
 Install the development version:
@@ -85,6 +79,15 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 &nbsp; &nbsp; &nbsp; &nbsp;
   <img src="images/croppedBH.png?raw=true" width="30%">
 </p>
+
+3. Calculate metrics
+
+| Metrics                | Code     | Concept |
+| ---------------------- | -------- | ------- |
+| ground vertex count    | g_vcount | xxx     |
+| ground area            | g_area   | xxx     |
+| vertical surface       | v_surf   | xxx     |
+| vertical surface       | vs       | xxx     |
 
 ## Note
 The downloading process may take some time, depending on the number and size
