@@ -1,4 +1,3 @@
-
 #' search_3dglobdf
 #' @description
 #' Search and retrieve 3D-GloBFP tiles that intersect a given bounding box or

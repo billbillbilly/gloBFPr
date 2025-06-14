@@ -82,12 +82,26 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 
 3. Calculate metrics
 
-| Metrics                | Code     | Concept |
-| ---------------------- | -------- | ------- |
-| ground vertex count    | g_vcount | xxx     |
-| ground area            | g_area   | xxx     |
-| vertical surface       | v_surf   | xxx     |
-| vertical surface       | vs       | xxx     |
+| Categoties | Metrics                             | Code     | Concept |
+| ---------- | ----------------------------------- | -------- | ------- |
+| morphology | ground vertex count                 | g_vcount | xxx     |
+| ^^         | ground area                         | g_area   | xxx     |
+| ^^         | perimeter                           | pmeter   | xxx     |
+| ^^         | vertical surface                    | v_surf   | xxx     |
+| ^^         | total surface                       | t_surf   | xxx     |
+| ^^         | volume                              | vol      | xxx     |
+| ^^         | object-oriented bounding box volume | obb_vol  | xxx     |
+| ^^         | perimeter-area ratio                | pa_ratio | xxx     |
+| ^^         | rectangularity                      | rec      | xxx     |
+| ^^         | fractality                          | fra      | xxx     |
+| ^^         | hemisphericality                    | hem      | xxx     |
+| ^^         | convexity                           | cnv      | xxx     |
+| ^^         | cuboidness                          | cbn      | xxx     |
+| ^^         | mean euclidean distance to centroid | me_dist  | xxx     |
+| ^^         | mean pairwise distance              | mp_dist  | xxx     |
+| ^^         | volume exchange ratio               | vol_exch | xxx     |
+| ^^         | elongation ratios (short)           | e_short  | xxx     |
+| ^^         | elongation ratios (long)            | e_long   | xxx     |
 
 ## Note
 The downloading process may take some time, depending on the number and size
@@ -98,9 +112,11 @@ It may break if the dataset owner changes the file organization or metadata form
 
 Please read the function documentation carefully. The dataset may require proper citation when used.
 
-## Other approaches
+## Other similar approaches
 - [overturemapsr]()
+- [UrbanMapper](https://github.com/VIDA-NYU/UrbanMapper): Spatial join & enrich any urban layer given any external urban dataset of interest
 - [3DBM](https://github.com/tudelft3d/3d-building-metrics): Elevating geometric analysis for urban morphology
+- [greenR]()
 
 ## Issues and bugs
 If you discover a bug not associated with connection to the API that is

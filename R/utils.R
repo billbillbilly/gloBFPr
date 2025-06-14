@@ -56,46 +56,6 @@ rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height"
 #### Metrics calculation ####
 
 #' @noMd
-add_mph <- function(projected_poly, type) {
-  #### Stats ####
-  projected_poly$ground_vertex_count <- nrow(sf::st_coordinates(projected_poly)) - 1
-
-  #### Properties ####
-  projected_poly$ground_area <- as.numeric(sf::st_area(projected_poly))
-  projected_poly$perimeter <- as.numeric(sf::st_perimeter(projected_poly))
-  projected_poly$vertical_surface <- projected_poly$perimeter * projected_poly$Height
-  projected_poly$total_surface <- projected_poly$vertical_surface + projected_poly$ground_area
-  projected_poly$actual_volume <- projected_poly$ground_area * projected_poly$Height
-  projected_poly$oobb_volume <- sf::st_area(sf::st_minimum_rotated_rectangle(projected_poly)) * projected_poly$Height
-
-  #### Indices ####
-  projected_poly$squareness <- projected_poly$perimeter / projected_poly$ground_area # Perimeter-Area Ratio
-  projected_poly$rectangularity <- projected_poly$ground_area / sf::st_area(sf::st_minimum_rotated_rectangle(projected_poly))
-  projected_poly$fractality <- 1 - log(projected_poly) / (1.5 * log(projected_poly$total_surface))
-  projected_poly$hemisphericality <- 0
-  projected_poly$convexity <- 0
-  projected_poly$cuboidness <- 0
-  projected_poly$med <- 0
-  projected_poly$mpd <- 0
-  projected_poly$vol_exch <- 0
-  projected_poly$elo_short <- 0
-  projected_poly$elo_long <- 0
-  for (i in 1:nrow(projected_poly)) {
-    poly_ <- projected_poly[i,]
-    projected_poly$hemisphericality[i] <- cal_hemisphericality(poly_)
-    projected_poly$convexity[i] <- cal_convexity(poly_)
-    projected_poly$cuboidness[i] <- cal_cuboidness(poly_)
-    projected_poly$med[i] <- cal_accessibility(poly_)
-    projected_poly$mpd[i] <- cal_mean_pairwise_distance(poly_)
-    projected_poly$vol_exch[i] <- cal_volume_exchange_ratio(poly_)
-    elongation_ratios <- cal_elongation_ratios(poly_)
-    projected_poly$elo_short[i] <- elongation_ratios[[1]]
-    projected_poly$elo_long[i] <- elongation_ratios[[2]]
-  }
-  return(projected_poly)
-}
-
-#' @noMd
 cal_hemisphericality <- function(poly_) {
   # minimum_area_rectangle <- sf::st_minimum_rotated_rectangle(poly)
   # coords_2d <- sf::st_coordinates(minimum_area_rectangle)
@@ -110,8 +70,8 @@ cal_hemisphericality <- function(poly_) {
   # radius <- sqrt(a2 + (sqrt(b2)/2)^2)
   # volume_hemisphere <- pi * radius^3 / 2
 
-  vol_hemisphere <- (2/3) * pi^(-0.5) * poly_$ground_area^(3/2)
-  hemisphericality <- (poly_$actual_volume - vol_hemisphere) / vol_hemisphere
+  vol_hemisphere <- (2/3) * pi^(-0.5) * poly_$g_area^(3/2)
+  hemisphericality <- (poly_$vol - vol_hemisphere) / vol_hemisphere
   return(hemisphericality)
 }
 
@@ -121,7 +81,7 @@ cal_convexity <- function(poly_) {
   multipoint <- sf::st_multipoint(vertices)
   multipoint <- sf::st_sfc(multipoint, crs = sf::st_crs(poly_))
   convex_hull <- sf::st_convex_hull(multipoint)
-  return(poly_$ground_area / sf::st_area(convex_hull))
+  return(poly_$g_area / sf::st_area(convex_hull))
 }
 
 #' @noMd
@@ -169,7 +129,7 @@ cal_volume_exchange_ratio <- function(poly_) {
   radius <- max(radii)
   vol_sphere <- (4/3) * pi * radius^3
   # Compute deviation
-  vol_exch <- (vol_sphere - poly_$actual_volume) / vol_sphere
+  vol_exch <- (vol_sphere - poly_$vol) / vol_sphere
   return(vol_exch)
 }
 
@@ -231,71 +191,7 @@ cal_elongation_ratios <- function(poly_) {
   # Compute elongation ratios
   ratio_short <- S / H
   ratio_long <- L / H
-
   return(list(ratio_short, ratio_long))
-}
-
-add_neighbor  <- function(projected_poly) {
-  centroids <- sf::st_centroid(projected_poly)
-}
-
-#' @noMd
-add_pop <- function(bbox, projected_poly, year) {
-  bbox <- sf::st_transform(bbox, crs = 4326)
-  d_mode <- 'auto'
-  # check os
-  os <- Sys.info()[["sysname"]]
-  if (os == "Windows") {
-    d_mode <- 'wb'
-  }
-  # GHS population grid
-  years <- c(2030, 2025, 2020, 2015, 2010, 2005, 2000, 1995, 1990, 1985, 1980, 1975)
-  result_list <- list()
-  if (year %in% years) {
-    intersected_tiles <- ghsl_tiles[sf::st_intersects(ghsl_tiles, bbox, sparse = FALSE), ]
-    for (i in seq_len(nrow(intersected_tiles))) {
-      temp_zip <- tempfile(fileext = ".zip")
-      utils::download.file(intersected_tiles$tile_id[i],
-                           destfile = temp_zip,
-                           mode = d_mode,
-                           quiet = TRUE)
-      unzip_dir <- tempfile()
-      utils::unzip(temp_zip, exdir = unzip_dir)
-      tif_files <- list.files(unzip_dir, pattern = "\\.tif$", full.names = TRUE)
-      if (length(tif_files) == 0) next
-      rast_data <- terra::rast(tif_files[1])
-      result_list[[length(result_list) + 1]] <- rast_data
-      unlink(c(temp_zip, unzip_dir), recursive = TRUE)
-    }
-
-    if (length(result_list) == 0) {
-      base::warning("No population rasters downloaded. Returning original polygons.")
-      return(projected_poly)
-    }
-
-    # Combine all into one terra raster object
-    r <- if (length(result_list) == 1) result_list[[1]] else do.call(terra::merge, result_list)
-
-    # reproject raster
-    utm_crs <- get_utm_crs(bbox)
-    r <- terra::project(r, paste0('EPSG:', utm_crs))
-
-    # calculate population density
-    r <- r / (100*100)
-
-    # use all centroids of projected_poly to extract value from the raster
-    pop_density_df <- terra::extract(r,
-                                     terra::vect(sf::st_centroid(projected_poly)),
-                                     raw = FALSE,
-                                     ID = FALSE)
-    # link pop_density_df back to projected_poly
-    projected_poly$pop_density <- pop_density_df[[1]]
-
-  } else {
-    base::warning(sprintf("Input year %d is not in allowed range. Skipping.", year))
-    return(projected_poly)
-  }
-  return(projected_poly)
 }
 
 #' @noMd
@@ -310,6 +206,57 @@ get_GHSurl <- function(year, id) {
       '.zip'
     )
   )
+}
+
+#' @noMd
+get_dem <- function(bbox, key) {
+  us_poly <- suppressMessages(tigris::nation(progress_bar = FALSE))
+  bbox_poly <- sf::st_transform(bbox, sf::st_crs(us_poly))
+
+  dem <- NULL
+
+  if (any(sf::st_intersects(bbox_poly, us_poly, sparse = FALSE))) {
+    # USGS sources
+    dem <- tryCatch({
+      dsmSearch::get_dsm_30(bbox, key, datatype = 'usgs1m')
+    }, error = function(e1) {
+      tryCatch({
+        dsmSearch::get_dsm_30(bbox, key, datatype = 'usgs10m')
+      }, error = function(e2) {
+        dsmSearch::get_dsm_30(bbox, key, datatype = 'SRTMGL1')
+      })
+    })
+  } else {
+    # Global SRTM fallback
+    dem <- tryCatch({
+      dsmSearch::get_dsm_30(bbox, key, datatype = 'SRTMGL1')
+    }, error = function(e) {
+      NULL
+    })
+  }
+
+  if (is.null(dem)) {
+    stop("Failed to get elevation data within the area of interest.")
+  }
+  return(dem)
+}
+
+#' @noMd
+get_chm <- function(bbox, min_height) {
+  # get CHM
+  chm <- dsmSearch::get_dsm_30(bbox=bbox, datatype='metaCHM')
+  # filtered CHM based on the minimum tree height
+  filteredCHM <- terra::ifel(chm < min_height, 0, chm)
+  isolatedCHM <- terra::ifel(chm < min_height, NA, 1)
+  return(list(filteredCHM, isolatedCHM))
+}
+
+#' @noMd
+merge_elev <- function(building, dem, chm=NULL) {
+  # prioritize layers:  (chm >) building > dem
+  bc <- terra::overlay(r1, building, fun = function(x, y) {
+    ifelse(x < y & x != 0, x, x + y)
+  })
 }
 
 #### Projection tools ####
@@ -341,4 +288,30 @@ reproj <- function(bbox, poly, utm_crs, res) {
   # Snap the extent to nearest multiple of resolution
   bbox_raster <- terra::align(bbox_raster, res)
   return(list(bbox_aligned, poly_proj, bbox_raster))
+}
+
+#' @noMd
+get_bbox <- function(x) {
+  bbox <- sf::st_as_sfc(sf::st_bbox(x), crs = sf::st_crs(x))
+  bbox <- sf::st_transform(bbox, crs = 4326)
+  return(bbox)
+}
+
+#' @noMd
+unify_layers <- function(bbox, ...) {
+  utm_crs <- get_utm_crs(bbox)
+  input_layers <- list(...)
+
+  # Reproject to UTM
+  input_layers <- lapply(input_layers, function(x) terra::project(x, paste0("epsg:", utm_crs)))
+
+  # Use the first layer as reference
+  ref <- input_layers[[1]]
+
+  # Align all layers to match reference (extent, resolution, projection)
+  aligned_layers <- lapply(input_layers, function(x) {
+    terra::resample(x, ref, method = "near")
+  })
+
+  return(aligned_layers)
 }
