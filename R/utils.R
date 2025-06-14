@@ -251,6 +251,20 @@ get_chm <- function(bbox, min_height) {
   return(list(filteredCHM, isolatedCHM))
 }
 
+get_gvi <- function(dsm, p, height, building, binary_chm) {
+  v <- terra::viewshed(dsm, p, height, 0)
+  v <- terra::ifel(v == 1, v, NA)
+  # viewshed area
+  v_area <- sum(terra::cellSize(v, unit = "m") * terra::values(v), na.rm = TRUE)
+  # get area of overlapping area between viewshed and binary canopy
+  canopy_aligned <- terra::resample(binary_chm, v, method = "near")
+  visible_canopy <- terra::mask(canopy_aligned, v)
+  visible_canopy <- terra::ifel(visible_canopy == 1, 1, NA)
+  overlap_area <- sum(terra::cellSize(visible_canopy, unit = "m") * terra::values(visible_canopy), na.rm = TRUE)
+  gvi <- overlap_area / (v_area - building$g_area)
+  return(gvi)
+}
+
 #' @noMd
 merge_elev <- function(building, dem, chm=NULL) {
   # prioritize layers:  (chm >) building > dem

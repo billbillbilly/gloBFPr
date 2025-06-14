@@ -196,7 +196,11 @@ get_neighbors <- function(x = NULL, radius = 500) {
       dists <- sf::st_distance(this_centroid, neighbor_centroids)
       projected_poly$neighbor_count[i] <- length(neighbor_indices)
       projected_poly$mean_neighbor_distance[i] <- mean(as.numeric(dists))
-      projected_poly$sd_neighbor_distance[i] <- sd(as.numeric(dists))
+      if (length(neighbor_indices) != 1) {
+        projected_poly$sd_neighbor_distance[i] <- sd(as.numeric(dists))
+      } else {
+        projected_poly$sd_neighbor_distance[i] <- NA
+      }
     }
   }
   return(projected_poly)
@@ -256,11 +260,12 @@ get_green_acc <- function(x = NULL,
     projected_poly$estimated_floors <- base::ifelse(projected_poly$g_area < 30 || buildings$Height < 6,
                                                     1,
                                                     projected_poly$estimated_floors)
-    projected_poly$mean_gvi <- 0
     projected_poly$min_gvi <- 0
     projected_poly$max_gvi <- 0
     projected_poly$sd_gvi <- 0
   }
+  projected_poly$mean_gvi <- 0
+
   # loop
   for (i in seq_len(nrow(projected_poly))) {
     building <- projected_poly[i,]
@@ -273,29 +278,33 @@ get_green_acc <- function(x = NULL,
     dsm <- bh + chm + dem
 
     GVIs <- c()
+    p <- cbind(viewpoint[1], viewpoint[2])
     if (isTRUE(floor)) {
-      p <- cbind(viewpoint[1], viewpoint[2])
       for (h in 1:building$estimated_floors) {
-        # viewshed
-        h <- 1.7
-        v <- terra::viewshed(dsm, p, h, 0)
-        v <- terra::ifel(v == 1, v, NA)
-        # viewshed area
-        v_area <- sum(terra::cellSize(v, unit = "m") * terra::values(v), na.rm = TRUE)
-        # get area of overlapping area between viewshed and binary canopy
-        canopy_aligned <- terra::resample(binary_chm, v, method = "near")
-        visible_canopy <- terra::mask(canopy_aligned, v)
-        visible_canopy <- terra::ifel(visible_canopy == 1, 1, NA)
-        overlap_area <- sum(terra::cellSize(visible_canopy, unit = "m") * terra::values(visible_canopy), na.rm = TRUE)
-        gvi <- overlap_area / (v_area - building$g_area)
+        height <- 1.7 + (h - 1) * 3
+        gvi <- get_gvi(dsm, p, height, building, binary_chm)
         GVIs <- c(GVIs, gvi)
       }
-
+      projected_poly$mean_gvi[i] <- mean(GVIs)
+      projected_poly$min_gvi[i] <- min(GVIs)
+      projected_poly$max_gvi[i] <- max(GVIs)
+      if (length(GVIs) == 1) {
+        projected_poly$sd_gvi[i] <- NA
+      } else {
+        projected_poly$sd_gvi[i] <- sd(GVIs)
+      }
     } else {
-
+      if (buildings$Height < 6) {
+        height_buttom <- 1.7
+        projected_poly$mean_gvi[i] <- get_gvi(dsm, p, height_buttom, building, binary_chm)
+      } else {
+        height_top <- 1.7 + building$Height - 3
+        height_buttom <- 1.7
+        gvi_top <- get_gvi(dsm, p, height_top, building, binary_chm)
+        gvi_buttom <- get_gvi(dsm, p, height_buttom, building, binary_chm)
+        projected_poly$mean_gvi[i] <- mean(c(gvi_top, gvi_buttom))
+      }
     }
   }
-
-
   return(projected_poly)
 }
