@@ -59,14 +59,17 @@ result <- gloBFPr::get_morphology(globfp_example)
 result <- gloBFPr::get_pop_density(result)
 ```
 
-## 
+## Neighboring buildings
 
 ```{r eval=FALSE}
-result <- gloBFPr::get_neighbors(result)
+result <- gloBFPr::get_neighbors(result, radius = 200)
 ```
 
 ##
 
 ```{r eval=FALSE}
-
+result <- gloBFPr::get_green_acc(result, 
+                                 min_tree_height = 2, 
+                                 radius = 500,
+                                 key = '665a5ee08172bf9a8db62da803294c9f')
 ```

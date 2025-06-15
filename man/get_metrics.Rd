@@ -14,7 +14,14 @@ get_pop_density(x = NULL, year = 2025)
 
 get_neighbors(x = NULL, radius = 500)
 
-get_green_acc(x = NULL, min_tree_height = 2, floor = FALSE, key = NULL)
+get_green_acc(
+  x = NULL,
+  min_tree_height = 2,
+  radius = 800,
+  floor = FALSE,
+  key = NULL,
+  progress_bar = TRUE
+)
 }
 \arguments{
 \item{x}{sf. building footprint polygon, typically output from \code{\link[=get_3dglobdf]{get_3dglobdf()}}}
@@ -23,8 +30,10 @@ get_green_acc(x = NULL, min_tree_height = 2, floor = FALSE, key = NULL)
 dataset to use. Must be one of: 1975, 1980, 1985, 1990, 1995, 2000, 2005,
 2010, 2015, 2020, 2025, or 2030. Default is 2025.}
 
-\item{radius}{numeric. (only required for \code{get_neighbors}) A numeric value
-specifying the buffer radius (meters) used to define local neighborhoods.}
+\item{radius}{numeric. (only required for \code{get_neighbors} and \code{get_green_acc})
+A numeric value specifying the buffer radius (meters) used to define
+local neighborhoods and visible area. Default for \code{get_neighbors} and
+\code{get_green_acc} is respectfully 500 and 800.}
 
 \item{min_tree_height}{numeric. (only required for \code{get_green_acc})
 Minimum height threshold (in meters) to classify vegetation as trees in the CHM.
@@ -32,10 +41,11 @@ Default is 2.}
 
 \item{floor}{logical. (only required for \code{get_green_acc}) Whether to compute
 Green View Index (GVI) for each floor level based on estimated number of floors.
-Default is \code{FALSE}.
-for each floor of a building volume. Default is \code{FALSE}.}
+Default is \code{FALSE}.}
 
 \item{key}{character. (only required for \code{get_green_acc}) API key of OpenTopography.}
+
+\item{progress_bar}{logical. Whether to display progress bar. Default is \code{TRUE}.}
 }
 \value{
 \code{get_morphology} returns an \code{sf} object identical to input \code{x},
@@ -56,7 +66,7 @@ with additional columns for:
 \item \code{me_dist}: Mean edge accessibility distance
 \item \code{mp_dist}: Mean pairwise distance within the footprint
 \item \code{vol_exch}: Volume exchange ratio
-\item \code{elo_short/elo_long}: Elongation ratios (short/long axis)
+\item \code{elo_x/elo_y/elo_z}: Elongation ratios (x/y/z axis)
 }
 
 \code{get_pop_density} returns an \code{sf} object identical to input \code{x},
@@ -82,7 +92,6 @@ with additional columns for:
 \item \code{mean_gvi}: Mean Green View Index value (0 to 1) from selected height(s).
 \item \code{min_gvi}, \code{max_gvi}, \code{sd_gvi}: Minimum, maximum,
 and standard deviation of Green View Index (GVI) (if \code{floor = TRUE}).
-\item \code{g_area}: Ground area of each building footprint (in square meters).
 \item \code{estimated_floors}: Estimated number of floors based on building height
 (if \code{floor = TRUE}).
 }
@@ -98,13 +107,14 @@ centroid location.
 
 \code{get_neighbors}: Computes the number of neighboring buildings and their average and standard
 deviation of centroid distances, based on a fixed-radius buffer and
-Voronoi-based adjacency. Useful for understanding local building density and
-spacing.
+Voronoi-based adjacency.
 
 \code{get_green_acc}: Calculate visual and distance accessibility of greenery for each building volume
 }
 \note{
 \code{x} must include a unique \code{id} field.
+
+To request an OpenTopography API token, please visit: \url{https://portal.opentopography.org/requestService?service=api}
 
 USGS 3DEP 1m/10m raster dataset is currently restricted to academic users.
 Academic users can request access to these data via the OpenTopography portal.
@@ -112,16 +122,17 @@ Non-academic users can enquire about an enterprise API key by emailing info@open
 See OpenTopography Terms of Use for more information on appropriate use of the API.
 }
 \examples{
+library(gloBFPr)
 data(globfp_example)
-result <- gloBFPr::get_morphology(buildings)
+result <- gloBFPr::get_morphology(globfp_example[c(1:3),])
 
-result <- gloBFPr::get_pop_density(buildings, year = 2025)
+result <- gloBFPr::get_pop_density(globfp_example[c(1:3),], year = 2025)
 
 
-result <- gloBFPr::get_neighbors(buildings, radius = 300)
+result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
 
 \donttest{
-result <- gloBFPr::get_green_acc(projected_buildings, key = "YOUR_opentopography_API_KEY")
+result <- gloBFPr::get_green_acc(globfp_example[c(1:3),], key = "YOUR_opentopography_API_KEY")
 }
 
 }

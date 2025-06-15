@@ -38,6 +38,7 @@ Imports:
     rlang,
     cli,
     dsmSearch,
+    viewscape,
     nominatimlite
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2

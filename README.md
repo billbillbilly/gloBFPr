@@ -82,33 +82,37 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 
 3. Calculate metrics
 
-| Categoties | Metrics                             | Code     | Concept |
-| ---------- | ----------------------------------- | -------- | ------- |
-| Morphology | ground vertex count                 | g_vcount | xxx     |
-|            | ground area                         | g_area   | xxx     |
-|            | perimeter                           | pmeter   | xxx     |
-|            | vertical surface                    | v_surf   | xxx     |
-|            | total surface                       | t_surf   | xxx     |
-|            | volume                              | vol      | xxx     |
-|            | object-oriented bounding box volume | obb_vol  | xxx     |
-|            | perimeter-area ratio                | pa_ratio | xxx     |
-|            | rectangularity                      | rec      | xxx     |
-|            | fractality                          | fra      | xxx     |
-|            | hemisphericality                    | hem      | xxx     |
-|            | convexity                           | cnv      | xxx     |
-|            | cuboidness                          | cbn      | xxx     |
-|            | mean euclidean distance to centroid | me_dist  | xxx     |
-|            | mean pairwise distance              | mp_dist  | xxx     |
-|            | volume exchange ratio               | vol_exch | xxx     |
-|            | elongation ratios on x direction    | elo_x    | xxx     |
-|            | elongation ratios on y direction    | elo_y    | xxx     |
-|            | elongation ratios on z direction    | elo_z    | xxx     |
-|            | elongation ratios on z direction    | elo_z    | xxx     |
-| Demography | population density per 10000m^2     | pop_den  | xxx     |
-| Neighbor   | Number of adjacent buildings        | n_count  | xxx     |
-|            | Mean distance from the building     | m_ndist  | xxx     |
-|            | Standard deviation of distances     | sd_ndist | xxx     |
-| Greenery   | population density per 10000m^2     | pop_den  | xxx     |
+| Categories   | Metrics                             | Code      | Concept                                                                 |
+|--------------|-------------------------------------|-----------|-------------------------------------------------------------------------|
+| **Morphology** | Ground vertex count                 | `g_vcount` | Number of vertices on the building footprint polygon                    |
+|              | Ground area                         | `g_area`   | Horizontal footprint area of the building                               |
+|              | Perimeter                           | `pmeter`  | Total boundary length of the footprint                                  |
+|              | Vertical surface                    | `v_surf`  | Estimated surface area of building walls                                |
+|              | Total surface                       | `t_surf`  | Sum of vertical surface and ground area                                 |
+|              | Volume                              | `vol`     | Approximate building volume (area × height)                             |
+|              | Object-oriented bounding box volume | `obb_vol` | Volume of the smallest rotated bounding box containing the building     |
+|              | Perimeter-area ratio                | `pa_ratio`| Indicator of compactness and shape irregularity                         |
+|              | Rectangularity                      | `rec`     | Ratio of area to its minimum bounding rectangle                         |
+|              | Fractality                          | `fra`     | Complexity of surface based on volume-to-surface ratio                  |
+|              | Hemisphericality                    | `hem`     | Deviation from ideal hemisphere volume                                  |
+|              | Convexity                           | `cnv`     | Ratio of footprint area to its convex hull area                         |
+|              | Cuboidness                          | `cbn`     | Degree to which the object resembles a cuboid                           |
+|              | Mean Euclidean distance to centroid | `me_dist` | Average distance from footprint vertices to centroid                    |
+|              | Mean pairwise distance              | `mp_dist` | Average distance between all footprint vertex pairs                     |
+|              | Volume exchange ratio               | `vol_exch`| Volume-to-surface ratio indicating massiveness                          |
+|              | Elongation ratio on X direction     | `elo_x`   | Shortest horizontal extent divided by height                            |
+|              | Elongation ratio on Y direction     | `elo_y`   | Longest horizontal extent divided by height                             |
+|              | Elongation ratio on Z direction     | `elo_z`   | Height relative to the maximum horizontal extent                        |
+| **Demography** | Population density per 10,000 m²     | `pop_den` | Number of people per 10,000 m² around the building                      |
+| **Neighbor**   | Number of adjacent buildings        | `n_count` | Count of nearby buildings based on proximity and Voronoi adjacency      |
+|                | Mean distance from the building     | `m_ndist` | Average distance to neighboring buildings                               |
+|                | Standard deviation of distances     | `sd_ndist`| Variation in distances to neighboring buildings                         |
+| **Greenery**   | Distance to the nearest green space | `dng`     | Distance from building centroid to closest vegetation pixel             |
+|                | Mean Green View Index (GVI)         | `mean_gvi`| Average proportion of visible green canopy in viewshed                  |
+|                | Minimum of Green View Index (GVI)   | `min_gvi` | Lowest GVI across all floor viewpoints                                  |
+|                | Maximum of GVI                      | `max_gvi` | Highest GVI across all floor viewpoints                                 |
+|                | Standard deviation of GVI           | `sd_gvi`  | Variation in greenery visibility across building height                 |
+
 
 ## Note
 The downloading process may take some time, depending on the number and size
@@ -120,7 +124,7 @@ It may break if the dataset owner changes the file organization or metadata form
 Please read the function documentation carefully. The dataset may require proper citation when used.
 
 ## Other similar approaches
-- [overturemapsr]()
+- [overturemapsr](https://github.com/denironyx/overturemapsr): Fetching OvertureMaps data from S3 and converting it to sf objects for spatial analysis
 - [UrbanMapper](https://github.com/VIDA-NYU/UrbanMapper): Spatial join & enrich any urban layer given any external urban dataset of interest
 - [3DBM](https://github.com/tudelft3d/3d-building-metrics): Elevating geometric analysis for urban morphology
 - [greenR]()

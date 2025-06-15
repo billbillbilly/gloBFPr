@@ -3,12 +3,13 @@
 #' @importFrom terra rast
 #' @importFrom terra rasterize
 #' @importFrom terra align
-#' @importFrom terra mask
+#' @importFrom terra mask project
 #' @importFrom sf st_centroid st_within
 #' @importFrom sf st_coordinates
 #' @importFrom sf st_transform
 #' @importFrom sf st_crs st_convex_hull
 #' @importFrom sf st_as_sfc st_multipoint
+#' @importFrom viewscape compute_viewshed calculate_feature
 
 #### Footprint data processing ####
 #' @noMd
@@ -171,7 +172,7 @@ get_GHSurl <- function(year, id) {
   # source: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
   return(
     paste0(
-      'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2030_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_POP_E',
+      'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_POP_E',
       year,
       '_GLOBE_R2023A_54009_100_V1_0_',
       id,
@@ -182,26 +183,38 @@ get_GHSurl <- function(year, id) {
 
 #' @noMd
 get_dem <- function(bbox, key) {
+  if (missing(key)) stop("missing api key")
+
   us_poly <- suppressMessages(tigris::nation(progress_bar = FALSE))
-  bbox_poly <- sf::st_transform(bbox, sf::st_crs(us_poly))
+  bbox_poly <- sf::st_transform(
+    sf::st_as_sfc(
+      sf::st_bbox(
+        c(xmin = bbox[1],
+          ymin = bbox[2],
+          xmax = bbox[3],
+          ymax = bbox[4]),
+        crs = 4326
+      )
+    ), sf::st_crs(us_poly)
+  )
 
   dem <- NULL
 
   if (any(sf::st_intersects(bbox_poly, us_poly, sparse = FALSE))) {
     # USGS sources
     dem <- tryCatch({
-      dsmSearch::get_dsm_30(bbox, key, datatype = 'usgs1m')
+      dsmSearch::get_dsm_30(bbox = bbox, key = key, datatype = 'usgs1m')
     }, error = function(e1) {
       tryCatch({
-        dsmSearch::get_dsm_30(bbox, key, datatype = 'usgs10m')
+        dsmSearch::get_dsm_30(bbox = bbox, key = key, datatype = 'usgs10m')
       }, error = function(e2) {
-        dsmSearch::get_dsm_30(bbox, key, datatype = 'SRTMGL1')
+        dsmSearch::get_dsm_30(bbox = bbox, key = key, datatype = 'SRTMGL1')
       })
     })
   } else {
     # Global SRTM fallback
     dem <- tryCatch({
-      dsmSearch::get_dsm_30(bbox, key, datatype = 'SRTMGL1')
+      dsmSearch::get_dsm_30(bbox = bbox, key = key, datatype = 'SRTMGL1')
     }, error = function(e) {
       NULL
     })
@@ -210,45 +223,62 @@ get_dem <- function(bbox, key) {
   if (is.null(dem)) {
     stop("Failed to get elevation data within the area of interest.")
   }
+
   return(dem)
 }
+
 
 #' @noMd
 get_chm <- function(bbox, min_height) {
   # get CHM
-  chm <- dsmSearch::get_dsm_30(bbox=bbox, datatype='metaCHM')
+  chm <- suppressMessages(dsmSearch::get_dsm_30(bbox = bbox, datatype = 'metaCHM'))
+  # reporject chm
+  bbox <- sf::st_as_sfc(
+    sf::st_bbox(
+      c(xmin = bbox[1],
+        ymin = bbox[2],
+        xmax = bbox[3],
+        ymax = bbox[4]),
+      crs = 4326
+    )
+  )
+  utm_crs <- get_utm_crs(bbox)
+  chm <- terra::project(chm, paste0('EPSG:', utm_crs), method = 'near')
   # filtered CHM based on the minimum tree height
   filteredCHM <- terra::ifel(chm < min_height, 0, chm)
-  isolatedCHM <- terra::ifel(chm < min_height, NA, 1)
+  binaryCHM <- terra::ifel(chm < min_height, 0, 1)
   return(list(filteredCHM, isolatedCHM))
 }
 
-get_gvi <- function(dsm, p, height, building, binary_chm) {
+get_gvi <- function(dsm, p, height, r, building, binary_chm) {
   tryCatch({
-    v <- terra::viewshed(dsm, p, height, 0)
-    v <- terra::ifel(v == 1, v, NA)
-
-    v_values <- terra::values(v)
-    if (all(is.na(v_values))) return(0)
-
+    # Viewshed
+    v <- viewscape::compute_viewshed(dsm = dsm, viewpoints = p,
+                                     offset_viewpoint = height,
+                                     r = r
+                                    )
     # Viewshed area
-    v_area <- sum(terra::cellSize(v, unit = "m") * v_values, na.rm = TRUE)
-    if (v_area == 0 || is.na(v_area)) return(0)
-
-    # Resample canopy to align
-    canopy_aligned <- terra::resample(binary_chm, v, method = "near")
-    visible_canopy <- terra::mask(canopy_aligned, v)
-    visible_canopy <- terra::ifel(visible_canopy == 1, 1, NA)
-    overlap_area <- sum(terra::cellSize(visible_canopy, unit = "m") * terra::values(visible_canopy), na.rm = TRUE)
+    v_area <- length(as.vector(v@visible[v@visible == 1])) * v@resolution[1]^2
+    # Visible canopy area
+    canopy_proportion <- viewscape::calculate_feature(viewshed = v,
+                                                      feature = binary_chm,
+                                                      type = 2,
+                                                      exclude_value = 0)
+    canopy_area <- v_area * canopy_proportion
 
     # Compute GVI (allow >1 if canopy exceeds viewshed minus building)
-    gvi <- overlap_area / max(v_area - building$g_area, 1e-6)  # use small constant to avoid division by 0
+    print(paste0("building area: ", as.numeric(building$g_area),
+                 "; viewshed area: ", v_area,
+                 "; visible green area: ", canopy_area,
+                 "; canopy proportion: ", canopy_proportion
+                 )
+          )
+    gvi <- canopy_area / max(v_area - as.numeric(building$g_area), 1e-6)  # use small constant to avoid division by 0
     gvi <- min(gvi, 1)  # cap at 1 if desired
 
     return(gvi)
   }, error = function(e) {
-    warning(sprintf("GVI calculation failed: %s", e$message))
-    return(0)
+    stop(sprintf("GVI calculation failed: %s", e$message))
   })
 }
 # Note:
@@ -304,6 +334,13 @@ get_bbox <- function(x) {
   bbox <- sf::st_as_sfc(sf::st_bbox(x), crs = sf::st_crs(x))
   bbox <- sf::st_transform(bbox, crs = 4326)
   return(bbox)
+}
+
+bbox_poly_to_list <- function(bbox) {
+  coor <- sf::st_coordinates(bbox)
+  return(
+    c(min(coor[,1]), min(coor[,2]), max(coor[,1]), max(coor[,2]))
+  )
 }
 
 #' @noMd
