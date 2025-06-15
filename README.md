@@ -84,24 +84,31 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 
 | Categoties | Metrics                             | Code     | Concept |
 | ---------- | ----------------------------------- | -------- | ------- |
-| morphology | ground vertex count                 | g_vcount | xxx     |
-| ^^         | ground area                         | g_area   | xxx     |
-| ^^         | perimeter                           | pmeter   | xxx     |
-| ^^         | vertical surface                    | v_surf   | xxx     |
-| ^^         | total surface                       | t_surf   | xxx     |
-| ^^         | volume                              | vol      | xxx     |
-| ^^         | object-oriented bounding box volume | obb_vol  | xxx     |
-| ^^         | perimeter-area ratio                | pa_ratio | xxx     |
-| ^^         | rectangularity                      | rec      | xxx     |
-| ^^         | fractality                          | fra      | xxx     |
-| ^^         | hemisphericality                    | hem      | xxx     |
-| ^^         | convexity                           | cnv      | xxx     |
-| ^^         | cuboidness                          | cbn      | xxx     |
-| ^^         | mean euclidean distance to centroid | me_dist  | xxx     |
-| ^^         | mean pairwise distance              | mp_dist  | xxx     |
-| ^^         | volume exchange ratio               | vol_exch | xxx     |
-| ^^         | elongation ratios (short)           | e_short  | xxx     |
-| ^^         | elongation ratios (long)            | e_long   | xxx     |
+| Morphology | ground vertex count                 | g_vcount | xxx     |
+|            | ground area                         | g_area   | xxx     |
+|            | perimeter                           | pmeter   | xxx     |
+|            | vertical surface                    | v_surf   | xxx     |
+|            | total surface                       | t_surf   | xxx     |
+|            | volume                              | vol      | xxx     |
+|            | object-oriented bounding box volume | obb_vol  | xxx     |
+|            | perimeter-area ratio                | pa_ratio | xxx     |
+|            | rectangularity                      | rec      | xxx     |
+|            | fractality                          | fra      | xxx     |
+|            | hemisphericality                    | hem      | xxx     |
+|            | convexity                           | cnv      | xxx     |
+|            | cuboidness                          | cbn      | xxx     |
+|            | mean euclidean distance to centroid | me_dist  | xxx     |
+|            | mean pairwise distance              | mp_dist  | xxx     |
+|            | volume exchange ratio               | vol_exch | xxx     |
+|            | elongation ratios on x direction    | elo_x    | xxx     |
+|            | elongation ratios on y direction    | elo_y    | xxx     |
+|            | elongation ratios on z direction    | elo_z    | xxx     |
+|            | elongation ratios on z direction    | elo_z    | xxx     |
+| Demography | population density per 10000m^2     | pop_den  | xxx     |
+| Neighbor   | Number of adjacent buildings        | n_count  | xxx     |
+|            | Mean distance from the building     | m_ndist  | xxx     |
+|            | Standard deviation of distances     | sd_ndist | xxx     |
+| Greenery   | population density per 10000m^2     | pop_den  | xxx     |
 
 ## Note
 The downloading process may take some time, depending on the number and size

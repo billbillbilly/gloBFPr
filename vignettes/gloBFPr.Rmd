@@ -7,6 +7,8 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+# 1. Get Building Footprints
+
 ## Step 1 Get the Spatial Grid with the Metadata of the Dataset
 
 ```{r eval=FALSE}
@@ -35,4 +37,36 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
                                            metadata = metadata, out_type = "all", 
                                            mask = TRUE, cell_size = 1)
+```
+
+# 2. Analyze Building Footprints
+
+Load example data in the package
+
+```{r eval=FALSE}
+data(globfp_example)
+```
+
+## Morphologic properties and indices
+
+```{r eval=FALSE}
+result <- gloBFPr::get_morphology(globfp_example)
+```
+
+## Population density
+
+```{r eval=FALSE}
+result <- gloBFPr::get_pop_density(result)
+```
+
+## 
+
+```{r eval=FALSE}
+result <- gloBFPr::get_neighbors(result)
+```
+
+##
+
+```{r eval=FALSE}
+
 ```

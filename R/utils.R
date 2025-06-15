@@ -4,7 +4,7 @@
 #' @importFrom terra rasterize
 #' @importFrom terra align
 #' @importFrom terra mask
-#' @importFrom sf st_centroid
+#' @importFrom sf st_centroid st_within
 #' @importFrom sf st_coordinates
 #' @importFrom sf st_transform
 #' @importFrom sf st_crs st_convex_hull
@@ -70,8 +70,14 @@ cal_hemisphericality <- function(poly_) {
   # radius <- sqrt(a2 + (sqrt(b2)/2)^2)
   # volume_hemisphere <- pi * radius^3 / 2
 
-  vol_hemisphere <- (2/3) * pi^(-0.5) * poly_$g_area^(3/2)
-  hemisphericality <- (poly_$vol - vol_hemisphere) / vol_hemisphere
+  base_area <- poly_$g_area
+  building_volume <- poly_$vol
+  # Compute radius of hemisphere with same base area
+  radius <- sqrt(base_area / pi)
+  # Volume of hemisphere with this radius
+  vol_hemisphere <- (2/3) * pi * radius^3
+  # deviation from ideal hemisphere volume
+  hemisphericality <- (building_volume - vol_hemisphere) / vol_hemisphere
   return(hemisphericality)
 }
 
@@ -81,11 +87,11 @@ cal_convexity <- function(poly_) {
   multipoint <- sf::st_multipoint(vertices)
   multipoint <- sf::st_sfc(multipoint, crs = sf::st_crs(poly_))
   convex_hull <- sf::st_convex_hull(multipoint)
-  return(poly_$g_area / sf::st_area(convex_hull))
+  return(as.numeric(poly_$g_area / sf::st_area(convex_hull)))
 }
 
 #' @noMd
-cal_mean_accessibility <- function(poly_) {
+cal_accessibility <- function(poly_) {
   # create a 3D voxel grid
   filtered_grid <- ploy2grid(poly_)
   # compute centroid of the volume
@@ -106,18 +112,8 @@ cal_mean_pairwise_distance <- function(poly_) {
   filtered_grid <- ploy2grid(poly_)
  # Compute all pairwise distances
   coords <- as.matrix(filtered_grid)
-  n <- nrow(coords)
-
-  total_dist <- 0
-  count <- 0
-  for (i in 1:(n-1)) {
-    for (j in (i+1):n) {
-      d <- sqrt(sum((coords[i, ] - coords[j, ])^2))
-      total_dist <- total_dist + d
-      count <- count + 1
-    }
-  }
-  return(total_dist / count)
+  dist <- mean_pairwise_distance(coords)
+  return(dist)
 }
 
 #' @noMd
@@ -135,42 +131,20 @@ cal_volume_exchange_ratio <- function(poly_) {
 
 #' @noMd
 ploy2grid <- function(poly_) {
-  height <- poly_$Height
+  height <- as.numeric(poly_$Height[1])
   bbox_ <- sf::st_bbox(poly_)
-  dx <- dy <- 2  # horizontal spacing
+  dx <- dy <- 5  # horizontal spacing
   dz <- 2        # vertical spacing
-  x_seq <- seq(bbox["xmin"], bbox["xmax"], by = dx)
-  y_seq <- seq(bbox["ymin"], bbox["ymax"], by = dy)
+  x_seq <- seq(bbox_["xmin"], bbox_["xmax"], by = dx)
+  y_seq <- seq(bbox_["ymin"], bbox_["ymax"], by = dy)
   z_seq <- seq(0, height, by = dz)
   grid_3d <- expand.grid(X = x_seq, Y = y_seq, Z = z_seq)
   # keep only points that fall inside the footprint (x, y only)
-  xy_points <- sf::st_as_sf(grid_3d, coords = c("X", "Y"), crs = st_crs(poly))
+  xy_points <- sf::st_as_sf(grid_3d, coords = c("X", "Y"), crs = st_crs(poly_))
   inside <- sf::st_within(xy_points, poly_, sparse = FALSE)[, 1]
   filtered_grid <- grid_3d[inside, ]
   return(filtered_grid)
 }
-
-"  double mean_pairwise_distance(Rcpp::NumericMatrix coords) {
-    int n = coords.nrow();
-    int dim = coords.ncol();
-    double total_dist = 0.0;
-    long count = 0;
-
-    for (int i = 0; i < n - 1; ++i) {
-      for (int j = i + 1; j < n; ++j) {
-        double d = 0.0;
-        for (int k = 0; k < dim; ++k) {
-          double diff = coords(i, k) - coords(j, k);
-          d += diff * diff;
-        }
-        total_dist += std::sqrt(d);
-        count += 1;
-      }
-    }
-
-    return total_dist / count;
-  }
-"
 
 cal_elongation_ratios <- function(poly_) {
   # Compute minimum bounding rectangle
@@ -178,20 +152,18 @@ cal_elongation_ratios <- function(poly_) {
   coords <- sf::st_coordinates(min_rect)[, 1:2]
 
   # Get edge lengths
-  edges <- sqrt(base::rowSums((coords - coords[c(2:5, 1), ])^2))
-  lengths <- sort(unique(round(edges, 8)))  # may have duplicate lengths due to rectangle
+  edges <- sqrt(rowSums((coords - coords[c(2:5, 1), ])^2))
+  side_lengths <- sort(round(edges[1:2], 4))
 
-  # Assign shortest and longest edge
-  S <- lengths[1]
-  L <- lengths[length(lengths)]
+  x_length <- side_lengths[1]  # shorter side (width)
+  y_length <- side_lengths[2]  # longer side (length)
+  z_length <- as.numeric(poly_$Height[1])  # height
 
-  # Use height attribute
-  H <- poly_$Height
+  ratio_x <- x_length / z_length
+  ratio_y <- y_length / z_length
+  ratio_z <- z_length / max(x_length, y_length)
 
-  # Compute elongation ratios
-  ratio_short <- S / H
-  ratio_long <- L / H
-  return(list(ratio_short, ratio_long))
+  return(list(ratio_x, ratio_y, ratio_z))
 }
 
 #' @noMd
@@ -252,18 +224,41 @@ get_chm <- function(bbox, min_height) {
 }
 
 get_gvi <- function(dsm, p, height, building, binary_chm) {
-  v <- terra::viewshed(dsm, p, height, 0)
-  v <- terra::ifel(v == 1, v, NA)
-  # viewshed area
-  v_area <- sum(terra::cellSize(v, unit = "m") * terra::values(v), na.rm = TRUE)
-  # get area of overlapping area between viewshed and binary canopy
-  canopy_aligned <- terra::resample(binary_chm, v, method = "near")
-  visible_canopy <- terra::mask(canopy_aligned, v)
-  visible_canopy <- terra::ifel(visible_canopy == 1, 1, NA)
-  overlap_area <- sum(terra::cellSize(visible_canopy, unit = "m") * terra::values(visible_canopy), na.rm = TRUE)
-  gvi <- overlap_area / (v_area - building$g_area)
-  return(gvi)
+  tryCatch({
+    v <- terra::viewshed(dsm, p, height, 0)
+    v <- terra::ifel(v == 1, v, NA)
+
+    v_values <- terra::values(v)
+    if (all(is.na(v_values))) return(0)
+
+    # Viewshed area
+    v_area <- sum(terra::cellSize(v, unit = "m") * v_values, na.rm = TRUE)
+    if (v_area == 0 || is.na(v_area)) return(0)
+
+    # Resample canopy to align
+    canopy_aligned <- terra::resample(binary_chm, v, method = "near")
+    visible_canopy <- terra::mask(canopy_aligned, v)
+    visible_canopy <- terra::ifel(visible_canopy == 1, 1, NA)
+    overlap_area <- sum(terra::cellSize(visible_canopy, unit = "m") * terra::values(visible_canopy), na.rm = TRUE)
+
+    # Compute GVI (allow >1 if canopy exceeds viewshed minus building)
+    gvi <- overlap_area / max(v_area - building$g_area, 1e-6)  # use small constant to avoid division by 0
+    gvi <- min(gvi, 1)  # cap at 1 if desired
+
+    return(gvi)
+  }, error = function(e) {
+    warning(sprintf("GVI calculation failed: %s", e$message))
+    return(0)
+  })
 }
+# Note:
+# In fact, if the building itself occupies nearly the entire viewshed,
+# or the canopy overlaps very closely, v_area - building$g_area could be ≤ 0,
+# yet still surrounded by trees — in which case GVI = 1 is conceptually valid.
+
+# max(v_area - building$g_area, 1e-6) prevents division by zero while allowing close overlap
+# min(gvi, 1) caps the value at 1 if needed for interpretation as a proportion
+# Still returns 0 if the viewshed fails or has no values
 
 #' @noMd
 merge_elev <- function(building, dem, chm=NULL) {
