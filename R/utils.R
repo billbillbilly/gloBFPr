@@ -247,7 +247,7 @@ get_chm <- function(bbox, min_height) {
   # filtered CHM based on the minimum tree height
   filteredCHM <- terra::ifel(chm < min_height, 0, chm)
   binaryCHM <- terra::ifel(chm < min_height, 0, 1)
-  return(list(filteredCHM, isolatedCHM))
+  return(list(filteredCHM, binaryCHM))
 }
 
 get_gvi <- function(dsm, p, height, r, building, binary_chm) {
@@ -267,13 +267,13 @@ get_gvi <- function(dsm, p, height, r, building, binary_chm) {
     canopy_area <- v_area * canopy_proportion
 
     # Compute GVI (allow >1 if canopy exceeds viewshed minus building)
-    print(paste0("building area: ", as.numeric(building$g_area),
-                 "; viewshed area: ", v_area,
-                 "; visible green area: ", canopy_area,
-                 "; canopy proportion: ", canopy_proportion
-                 )
-          )
-    gvi <- canopy_area / max(v_area - as.numeric(building$g_area), 1e-6)  # use small constant to avoid division by 0
+    # print(paste0("building area: ", as.numeric(building$g_area),
+    #              "; viewshed area: ", v_area,
+    #              "; visible green area: ", canopy_area,
+    #              "; canopy proportion: ", canopy_proportion
+    #              )
+    #       )
+    gvi <- canopy_area / max(v_area - building$g_area, 1e-6)  # use small constant to avoid division by 0
     gvi <- min(gvi, 1)  # cap at 1 if desired
 
     return(gvi)
