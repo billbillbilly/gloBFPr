@@ -60,6 +60,7 @@
 #' @examples
 #' library(gloBFPr)
 #' data(globfp_example)
+#' globfp_example <- sf::st_as_sfc(globfp_example)
 #' result <- gloBFPr::get_morphology(globfp_example[c(1:3),])
 #'
 #' @export

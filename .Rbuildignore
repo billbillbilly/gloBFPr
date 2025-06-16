@@ -7,3 +7,4 @@
 ^LICENSE\.md$
 ^docs$
 ^.*\.gitignore$
+^.*\.Rhistory$

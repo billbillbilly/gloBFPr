@@ -1,0 +1,25 @@
+---
+title: "visualize_example"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(sf)
+
+load('sample_data.rda')
+```
+
+```{r}
+ggplot(result) +
+  geom_sf(aes(fill = g_area)) +
+  scale_fill_viridis_c(option = "inferno") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(result) +
+  geom_sf(aes(fill = dng)) +
+  scale_fill_viridis_c(option = "plasma") +
+  theme_minimal()
+```
