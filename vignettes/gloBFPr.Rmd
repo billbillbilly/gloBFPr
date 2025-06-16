@@ -1,13 +1,11 @@
 ---
-title: "gloBFPr"
+title: "gloBFPr_data_acquisition"
 author: "Xiaohao Yang"
 vignette: >
   %\VignetteIndexEntry{gloBFPr}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
-
-# 1. Get Building Footprints
 
 ## Step 1 Get the Spatial Grid with the Metadata of the Dataset
 
@@ -39,37 +37,4 @@ buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045
                                            mask = TRUE, cell_size = 1)
 ```
 
-# 2. Analyze Building Footprints
 
-Load example data in the package
-
-```{r eval=FALSE}
-data(globfp_example)
-```
-
-## Morphologic properties and indices
-
-```{r eval=FALSE}
-result <- gloBFPr::get_morphology(globfp_example)
-```
-
-## Population density
-
-```{r eval=FALSE}
-result <- gloBFPr::get_pop_density(result)
-```
-
-## Neighboring buildings
-
-```{r eval=FALSE}
-result <- gloBFPr::get_neighbors(result, radius = 200)
-```
-
-##
-
-```{r eval=FALSE}
-result <- gloBFPr::get_green_acc(result, 
-                                 min_tree_height = 2, 
-                                 radius = 500,
-                                 key = 'api')
-```

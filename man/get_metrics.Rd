@@ -19,8 +19,7 @@ get_green_acc(
   min_tree_height = 2,
   radius = 800,
   floor = FALSE,
-  key = NULL,
-  progress_bar = TRUE
+  key = NULL
 )
 }
 \arguments{
@@ -44,8 +43,6 @@ Green View Index (GVI) for each floor level based on estimated number of floors.
 Default is \code{FALSE}.}
 
 \item{key}{character. (only required for \code{get_green_acc}) API key of OpenTopography.}
-
-\item{progress_bar}{logical. Whether to display progress bar. Default is \code{TRUE}.}
 }
 \value{
 \code{get_morphology} returns an \code{sf} object identical to input \code{x},
@@ -126,7 +123,8 @@ library(gloBFPr)
 data(globfp_example)
 result <- gloBFPr::get_morphology(globfp_example[c(1:3),])
 
-result <- gloBFPr::get_pop_density(globfp_example[c(1:3),], year = 2025)
+result <- gloBFPr::get_pop_density(# globfp_example[c(1:3),],
+                                   year = 2025)
 
 
 result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)

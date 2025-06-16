@@ -1,0 +1,39 @@
+---
+title: "gloBFPr_data_analysis"
+output: html_document
+---
+
+# Analyze Building Footprints
+
+Load example data in the package
+
+```{r eval=FALSE}
+data(globfp_example)
+```
+
+## Morphologic properties and indices
+
+```{r eval=FALSE}
+result <- gloBFPr::get_morphology(globfp_example)
+```
+
+## Population density
+
+```{r eval=FALSE}
+result <- gloBFPr::get_pop_density(result)
+```
+
+## Neighboring buildings
+
+```{r eval=FALSE}
+result <- gloBFPr::get_neighbors(result, radius = 500)
+```
+
+## Greenery aaccessibility
+
+```{r eval=FALSE}
+result <- gloBFPr::get_green_acc(result, 
+                                 min_tree_height = 2, 
+                                 radius = 800,
+                                 key = '665a5ee08172bf9a8db62da803294c9f')
+```
