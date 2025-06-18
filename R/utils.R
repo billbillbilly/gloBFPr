@@ -168,17 +168,38 @@ cal_elongation_ratios <- function(poly_) {
 }
 
 #' @noMd
-get_GHSurl <- function(year, id) {
-  # source: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
-  return(
-    paste0(
-      'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_POP_E',
-      year,
-      '_GLOBE_R2023A_54009_100_V1_0_',
-      id,
-      '.zip'
+get_GHSurl <- function(year, id, type) {
+  if (type == 'pop') {
+    # source: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
+    return(
+      paste0(
+        'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_POP_E',
+        year,
+        '_GLOBE_R2023A_54009_100_V1_0_',
+        id,
+        '.zip'
+      )
     )
-  )
+  } else if (type == 'b_surf') {
+    return(
+      list(
+        paste0(
+          'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_BUILT_S_GLOBE_R2023A/GHS_BUILT_S_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_BUILT_S_E',
+          year,
+          '_GLOBE_R2023A_54009_100_V1_0_',
+          id,
+          '.zip'
+        ),
+        paste0(
+          'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_BUILT_S_GLOBE_R2023A/GHS_BUILT_S_NRES_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_BUILT_S_NRES_E',
+          year,
+          '_GLOBE_R2023A_54009_100_V1_0_',
+          id,
+          '.zip'
+        )
+      )
+    )
+  }
 }
 
 #' @noMd
