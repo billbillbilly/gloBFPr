@@ -51,9 +51,7 @@
 #' footprint dataset. Earth Syst. Sci. Data, 16, 5357-5374
 #'
 #' @examples
-#' metadata <- gloBFPr::get_metadata(test=TRUE)
-#' buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
-#'                      metadata=metadata)
+#' buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639))
 #'
 #' @importFrom sf st_bbox
 #' @importFrom sf st_read
@@ -70,17 +68,12 @@
 
 search_3dglobdf <- function(bbox=NULL,
                             place=NULL,
-                            metadata=NULL,
                             crop=FALSE,
                             out_type='poly',
                             mask=FALSE,
                             cell_size=1) {
   if (inherits(bbox, 'NULL') && inherits(place, 'NULL')) {
     base::warning('Area of interest is missing: boox or place')
-    return(NULL)
-  }
-
-  if (inherits(metadata, "NULL")) {
     return(NULL)
   }
 
@@ -110,6 +103,7 @@ search_3dglobdf <- function(bbox=NULL,
   bbox <- sf::st_transform(bbox, 4326)
 
   # find all areas of spatial grid that intersect with bbox
+  metadata <- get_metadata()
   intersecting <- metadata[sf::st_intersects(metadata, bbox, sparse = FALSE), ]
 
   if (nrow(intersecting) == 0) {
@@ -238,4 +232,34 @@ search_3dglobdf <- function(bbox=NULL,
   }
 
   stop("Invalid out_type specified.")
+}
+
+#' get_fused_dsm
+#' @description
+#' Generate digital surface model using multiple datasets, including building height map,
+#' canopy height map, and terrain model.
+#' @param x sf. building footprint polygon, typically output from [get_3dglobdf()]
+#' @examples
+#' \donttest{
+#'  example <- gloBFPr::globfp_example
+#'  dsm <- get_fused_dsm(x= example, key = 'key')
+#' }
+#'
+#' @export
+get_fused_dsm <- function(x = NULL,
+                          min_tree_height = 2,
+                          key = NULL) {
+  projected_poly <- x
+  bbox <- get_bbox(x)
+  bbox_vector <- bbox_poly_to_list(bbox)
+
+  chm_layers <- suppressMessages(get_chm(bbox_vector, min_tree_height))
+  dem <- get_dem(bbox_vector, key)
+
+  chm_n_dem <- unify_layers(bbox, chm_layers[[1]], dem)
+  chm <- chm_n_dem[[1]]
+  dem <- chm_n_dem[[2]]
+  dsm <- chm + dem
+
+  return(dsm)
 }

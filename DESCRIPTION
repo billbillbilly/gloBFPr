@@ -31,6 +31,7 @@ Suggests:
 Imports:
     Rcpp,
     sf,
+    lwgeom,
     dplyr,
     httr2,
     terra,
