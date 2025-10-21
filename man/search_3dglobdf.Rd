@@ -7,7 +7,6 @@
 search_3dglobdf(
   bbox = NULL,
   place = NULL,
-  metadata = NULL,
   crop = FALSE,
   out_type = "poly",
   mask = FALSE,
@@ -21,9 +20,6 @@ defining the area of interest. This can be ignored if \code{place} is specified.
 \item{place}{vector (optional). A single line address,
 e.g. ("1600 Pennsylvania Ave NW, Washington") or a vector of addresses
 (c("Madrid", "Barcelona")).}
-
-\item{metadata}{sf. Typically output from \code{\link[=get_metadata]{get_metadata()}}, containing tile
-extents and download URLs.}
 
 \item{crop}{logical. If \code{TRUE}, the resulting building footprint geometries
 will be cropped to the input \code{bbox}. Default is \code{FALSE}.}
@@ -44,6 +40,9 @@ is \code{"graduated_rast"}, \code{"rast"}, or \code{"all"}.}
 
 \item{cell_size}{numeric (optional). Default is 1. Only used when \code{out_type}
 is \code{"graduated_rast"}, \code{"rast"}, or \code{"all"}.}
+
+\item{metadata}{sf. Typically output from \code{\link[=get_metadata]{get_metadata()}}, containing tile
+extents and download URLs.}
 }
 \value{
 Varies based on \code{out_type}:
@@ -68,9 +67,7 @@ This implementation relies on the current structure of the dataset as hosted on 
 It may break if the dataset owner changes the file organization or metadata format.
 }
 \examples{
-metadata <- gloBFPr::get_metadata(test=TRUE)
-buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639),
-                     metadata=metadata)
+buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639))
 
 }
 \references{

@@ -16,7 +16,7 @@ Description: Automated access and analysis of multidimensional building profile
     It includes functions to retrieve building height tiles, compute a range of 
     multidimensional building morphology metrics, assess environmental context 
     (e.g., greenery accessibility), and support spatial analysis for urban form 
-    and density studies.
+    studies.
 License: MIT + file LICENSE
 URL: https://github.com/billbillbilly/gloBFPr
 BugReports: https://github.com/billbillbilly/gloBFPr/issues

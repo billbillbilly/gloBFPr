@@ -4,6 +4,7 @@
 \alias{get_metrics}
 \alias{get_morphology}
 \alias{get_pop_density}
+\alias{get_residential}
 \alias{get_neighbors}
 \alias{get_green_acc}
 \title{get_metrics}
@@ -11,6 +12,8 @@
 get_morphology(x = NULL)
 
 get_pop_density(x = NULL, year = 2025)
+
+get_residential(x = NULL, year = NULL)
 
 get_neighbors(x = NULL, radius = 500)
 
@@ -73,6 +76,10 @@ with an added column:
 at the centroid of each building polygon.
 }
 
+returns an \code{sf} object identical to input \code{x},
+with additional columns :
+\code{res}: logical. Whether the building is residential or not.
+
 \code{get_neighbors} returns an \code{sf} object identical to input \code{x},
 with additional columns for:
 \itemize{
@@ -102,6 +109,9 @@ These include area, perimeter, surface area, volume, shape compactness, elongati
 population density values to each input building polygon based on its
 centroid location.
 
+\code{get_residential}: Estimate residential and non-residential building based on
+Global Human Settlement Layer (GHSL) built-up surface data
+
 \code{get_neighbors}: Computes the number of neighboring buildings and their average and standard
 deviation of centroid distances, based on a fixed-radius buffer and
 Voronoi-based adjacency.
@@ -121,14 +131,16 @@ See OpenTopography Terms of Use for more information on appropriate use of the A
 \examples{
 library(gloBFPr)
 data(globfp_example)
+globfp_example <- sf::st_as_sfc(globfp_example)
 result <- gloBFPr::get_morphology(globfp_example[c(1:3),])
 
 result <- gloBFPr::get_pop_density(# globfp_example[c(1:3),],
                                    year = 2025)
 
 
-result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
+result <- gloBFPr::get_residential(globfp_example[c(1:3),])
 
+result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
 \donttest{
 result <- gloBFPr::get_green_acc(globfp_example[c(1:3),], key = "YOUR_opentopography_API_KEY")
 }
@@ -151,4 +163,8 @@ Melchiorri, M., Freire, S., Schiavina, M. et al.
 The Multi-temporal and Multi-dimensional Global Urban Centre Database to
 Delineate and Analyse World Cities. Sci Data 11, 82 (2024).
 https://doi.org/10.1038/s41597-023-02691-1
+
+Essential background in Pesaresi, M. et al. (2024) "Advances on the Global Human
+Settlement Layer by joint assessment of Earth Observation and population survey data",
+International Journal of Digital Earth, 17(1).
 }

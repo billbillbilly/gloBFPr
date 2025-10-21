@@ -1,3 +1,4 @@
+
 #' get_metadata
 #' @description
 #' Returns a spatial grid (as an sf object) containing metadata and download URLs
@@ -76,10 +77,10 @@ get_metadata <- function(test=FALSE) {
   result <- list()
   for (i in 1:length(subdatasets)) {
     article_id <- subdatasets[i]
-    res <- httr2::request(paste0("https://api.figshare.com/v2/articles/", article_id)) %>%
+    res <- httr2::request(paste0("https://api.figshare.com/v2/articles/", article_id, "/files?limit=1000")) %>%
       httr2::req_perform()
     data <- res %>% httr2::resp_body_json()
-    file_info <- do.call(rbind, lapply(data$files, function(f) {
+    file_info <- do.call(rbind, lapply(data, function(f) {
       info <- info_extract(f$name)
       data.frame(
         id = f$id,
@@ -108,8 +109,8 @@ get_metadata <- function(test=FALSE) {
               ),
               ncol = 2,
               byrow = TRUE)
-            )
-          ), crs = 4326)) %>%
+          )
+        ), crs = 4326)) %>%
     dplyr::ungroup() %>%
     sf::st_as_sf()
   return(grids_sf)
