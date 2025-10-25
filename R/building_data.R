@@ -27,6 +27,8 @@
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
 #' @param cell_size numeric (optional). Default is 1. Only used when `out_type`
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
+#' @param quiet logical. If `TRUE`, console message will be returned.
+#' Default is `TRUE`.
 #'
 #' @return Varies based on `out_type`:
 #' \itemize{
@@ -71,7 +73,8 @@ search_3dglobdf <- function(bbox=NULL,
                             crop=FALSE,
                             out_type='poly',
                             mask=FALSE,
-                            cell_size=1) {
+                            cell_size=1,
+                            quiet=TRUE) {
   if (inherits(bbox, 'NULL') && inherits(place, 'NULL')) {
     base::warning('Area of interest is missing: boox or place')
     return(NULL)
@@ -103,8 +106,7 @@ search_3dglobdf <- function(bbox=NULL,
   bbox <- sf::st_transform(bbox, 4326)
 
   # find all areas of spatial grid that intersect with bbox
-  metadata <- get_metadata()
-  intersecting <- metadata[sf::st_intersects(metadata, bbox, sparse = FALSE), ]
+  intersecting <- globfp3d_metadata[sf::st_intersects(globfp3d_metadata, bbox, sparse = FALSE), ]
 
   if (nrow(intersecting) == 0) {
     base::warning("No tiles intersect with the provided bbox.")
@@ -151,8 +153,7 @@ search_3dglobdf <- function(bbox=NULL,
     }
     unlink(c(temp_zip, unzip_dir), recursive = TRUE)
   }
-  cli::cli_alert_success('Finished downloading and loading')
-  cli::cli_alert_info('Start processing data ...')
+
   result_list <- lapply(result_list, function(x) {
     #x <- sf::st_cast(x, "POLYGON")  # ensure same geometry type
     x <- x[, intersect(names(x), names(result_list[[1]]))]  # keep common columns only
@@ -167,13 +168,10 @@ search_3dglobdf <- function(bbox=NULL,
   all_data <- sf::st_transform(all_data, crs = utm_crs)
   # sf_data <- sf_data[!sf::st_is_empty(sf_data), ]
   all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox_proj, sparse = FALSE), ])
-  cli::cli_alert_success('Found building footprints within bbox')
   # crop the data if 'crop' == true
   if (crop) {
     #all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
-    cli::cli_alert_info('Start cropping data ...')
     all_data <- suppressWarnings(sf::st_crop(all_data, bbox_proj))
-    cli::cli_alert_success('Cropped building footprints using bbox')
   }
 
   # assign an id to each building
@@ -183,24 +181,21 @@ search_3dglobdf <- function(bbox=NULL,
   if(out_type == 'poly') {
     end_time <- Sys.time()
     process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-    cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time/60), " minutes."))
+    time_taken(process_time)
     return(all_data)
   }
 
   # auto-generate raster outputs
   if (out_type %in% c("binary_rast", "graduated_rast", "rast", "all")) {
     if (isTRUE(mask) || out_type == 'binary_rast' || out_type == 'all') {
-      cli::cli_alert_info('Generate binary raster ...')
       binary <- rasterize_binary(all_data, bbox, res=cell_size)
       cli::cli_alert_success('Generated binary building footprints raster')
     }
 
     if (isTRUE(mask) && out_type != "binary_rast") {
-      cli::cli_alert_info('Mask building height raster ...')
       graduated <- rasterize_height(all_data, bbox, res=cell_size, mask=binary)
       cli::cli_alert_success('Generated masked building footprints raster')
     } else {
-      cli::cli_alert_info('Generate binary raster ...')
       graduated <- rasterize_height(all_data, bbox, res=cell_size)
       cli::cli_alert_success('Generated building height raster')
     }
@@ -208,25 +203,25 @@ search_3dglobdf <- function(bbox=NULL,
     if (out_type == "binary_rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time/60), " minutes."))
+      time_taken(process_time)
       return(binary)
     }
     if (out_type == "graduated_rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time/60), " minutes."))
+      time_taken(process_time)
       return(graduated)
     }
     if (out_type == "rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time/60), " minutes."))
+      time_taken(process_time)
       return(list(binary = binary, graduated = graduated))
     }
     if (out_type == "all") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time/60), " minutes."))
+      time_taken(process_time)
       return(list(poly = all_data, binary = binary, graduated = graduated))
     }
   }

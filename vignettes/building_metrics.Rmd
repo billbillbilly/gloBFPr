@@ -35,5 +35,5 @@ result <- gloBFPr::get_neighbors(result, radius = 500)
 result <- gloBFPr::get_green_acc(result, 
                                  min_tree_height = 2, 
                                  radius = 800,
-                                 key = '665a5ee08172bf9a8db62da803294c9f')
+                                 key = '')
 ```

@@ -7,13 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-## Step 1 Get the Spatial Grid with the Metadata of the Dataset
-
-```{r eval=FALSE}
-metadata <- gloBFPr::get_metadata()
-```
-
-## Step 2.1 Retrieve Building Footprints with Heights Using a Bounding Box
+## Step 1 Retrieve Building Footprints with Heights Using a Bounding Box
 
 Set `out_type = "all"` o return a comprehensive list of outputs, including:
 - `poly`: an `sf` object of building footprints,
@@ -27,7 +21,7 @@ buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045
                                            metadata = metadata, out_type = "all", cell_size = 1)
 ```
 
-## Step 2.2 Retrieve Building Footprints with Heights Using a Bounding Box
+## Step 2 Retrieve Building Footprints with Heights Using a Bounding Box
 
 Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
 

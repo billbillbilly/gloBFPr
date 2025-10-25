@@ -147,6 +147,7 @@ ploy2grid <- function(poly_) {
   return(filtered_grid)
 }
 
+#' @noMd
 cal_elongation_ratios <- function(poly_) {
   # Compute minimum bounding rectangle
   min_rect <- sf::st_minimum_rotated_rectangle(poly_)
@@ -168,6 +169,121 @@ cal_elongation_ratios <- function(poly_) {
 }
 
 #' @noMd
+get_gvi <- function(dsm, p, height, r, building, binary_chm) {
+  tryCatch({
+    # Viewshed
+    v <- viewscape::compute_viewshed(dsm = dsm, viewpoints = p,
+                                     offset_viewpoint = height,
+                                     r = r
+    )
+    # Viewshed area
+    v_area <- length(as.vector(v@visible[v@visible == 1])) * v@resolution[1]^2
+    # Visible canopy area
+    canopy_proportion <- viewscape::calculate_feature(viewshed = v,
+                                                      feature = binary_chm,
+                                                      type = 2,
+                                                      exclude_value = 0)
+    canopy_area <- v_area * canopy_proportion
+
+    # Compute GVI (allow >1 if canopy exceeds viewshed minus building)
+    # print(paste0("building area: ", as.numeric(building$g_area),
+    #              "; viewshed area: ", v_area,
+    #              "; visible green area: ", canopy_area,
+    #              "; canopy proportion: ", canopy_proportion
+    #              )
+    #       )
+    gvi <- canopy_area / max(v_area - building$g_area, 1e-6)  # use small constant to avoid division by 0
+    gvi <- min(gvi, 1)  # cap at 1 if desired
+
+    return(gvi)
+  }, error = function(e) {
+    stop(sprintf("GVI calculation failed: %s", e$message))
+  })
+}
+# Note:
+# In fact, if the building itself occupies nearly the entire viewshed,
+# or the canopy overlaps very closely, v_area - building$g_area could be ≤ 0,
+# yet still surrounded by trees — in which case GVI = 1 is conceptually valid.
+
+# max(v_area - building$g_area, 1e-6) prevents division by zero while allowing close overlap
+# min(gvi, 1) caps the value at 1 if needed for interpretation as a proportion
+# Still returns 0 if the viewshed fails or has no values
+
+#### Data collection and processing ####
+
+get_GHSres <- function(bbox = NULL, year = NULL) {
+  # Store the original 'timeout' option and ensure it's reset upon function exit
+  original_timeout <- getOption('timeout')
+  on.exit(options(timeout = original_timeout), add = TRUE)
+  options(timeout=9999)
+
+  d_mode <- 'auto'
+  # check os
+  os <- Sys.info()[["sysname"]]
+  d_mode <- if (Sys.info()[["sysname"]] == "Windows") 'wb' else 'auto'
+
+  # GHS population grid
+  years <- c(2030, 2025, 2020, 2018, 2015, 2010, 2005, 2000, 1995, 1990, 1985, 1980, 1975)
+  result_list_total <- list()
+  result_list_nres <- list()
+  temp_paths <- c()  # store paths for later cleanup
+
+  if (year %in% years) {
+    intersected_tiles <- ghsl_tiles[sf::st_intersects(ghsl_tiles, bbox, sparse = FALSE), ]
+    for (i in seq_len(nrow(intersected_tiles))) {
+      temp_total_zip <- tempfile(fileext = ".zip")
+      temp_nres_zip <- tempfile(fileext = ".zip")
+      urls <- get_GHSurl(year, intersected_tiles$tile_id[i])
+      utils::download.file(urls[[1]],
+                           destfile = temp_total_zip,
+                           mode = d_mode,
+                           quiet = TRUE)
+      utils::download.file(urls[[2]],
+                           destfile = temp_nres_zip,
+                           mode = d_mode,
+                           quiet = TRUE)
+      unzip_total_dir <- tempfile()
+      unzip_nres_dir <- tempfile()
+      utils::unzip(temp_total_zip, exdir = unzip_total_dir)
+      utils::unzip(temp_nres_zip, exdir = unzip_nres_dir)
+      total_tif_files <- list.files(unzip_total_dir, pattern = "\\.tif$", full.names = TRUE)
+      nres_tif_files <- list.files(unzip_nres_dir, pattern = "\\.tif$", full.names = TRUE)
+      if (length(total_tif_files) == 0) next
+      total_rast_data <- terra::rast(total_tif_files[1])
+      nres_rast_data <- terra::rast(nres_tif_files[1])
+      result_list_total[[length(result_list_total) + 1]] <- total_rast_data
+      result_list_nres[[length(result_list_nres) + 1]] <- nres_rast_data
+      temp_paths <- c(temp_paths,
+                      temp_total_zip, temp_nres_zip,
+                      unzip_total_dir, unzip_nres_dir)
+    }
+
+    if (length(result_list_total) == 0) {
+      base::warning("No building surface raster downloaded. Returning original polygons.")
+      return(projected_poly)
+    }
+
+    # Combine all into one terra raster object
+    r_total <- if (length(result_list_total) == 1) result_list_total[[1]] else do.call(terra::merge, result_list_total)
+    r_nres <- if (length(result_list_nres) == 1) result_list_nres[[1]] else do.call(terra::merge, result_list_nres)
+    # reproject rasters
+    utm_crs <- get_utm_crs(bbox)
+    r_total <- terra::project(r_total, paste0('EPSG:', utm_crs), method = 'near')
+    r_nres <- terra::project(r_nres, paste0('EPSG:', utm_crs), method = 'near')
+    # calculate residential
+    r_res <- r_total - r_nres
+    # crop
+    r_res <- terra::crop(r_res, terra::ext(terra::project(terra::vect(bbox), terra::crs(r_res))))
+
+    # Ensure cleanup
+    on.exit(unlink(temp_paths, recursive = TRUE), add = TRUE)
+    return(r_res)
+  } else {
+    stop(sprintf("Input year %d is not in allowed range. Skipping.", year))
+  }
+}
+
+#' @noMd
 get_GHSurl <- function(year, id, type) {
   if (type == 'pop') {
     # source: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
@@ -184,14 +300,18 @@ get_GHSurl <- function(year, id, type) {
     return(
       list(
         paste0(
-          'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_BUILT_S_GLOBE_R2023A/GHS_BUILT_S_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_BUILT_S_E',
+          'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_BUILT_S_GLOBE_R2023A/GHS_BUILT_S_E',
+          year,
+          '_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_BUILT_S_E',
           year,
           '_GLOBE_R2023A_54009_100_V1_0_',
           id,
           '.zip'
         ),
         paste0(
-          'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_BUILT_S_GLOBE_R2023A/GHS_BUILT_S_NRES_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_BUILT_S_NRES_E',
+          'https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_BUILT_S_GLOBE_R2023A/GHS_BUILT_S_NRES_E',
+          year,
+          '_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_BUILT_S_NRES_E',
           year,
           '_GLOBE_R2023A_54009_100_V1_0_',
           id,
@@ -201,6 +321,8 @@ get_GHSurl <- function(year, id, type) {
     )
   }
 }
+
+
 
 #' @noMd
 get_dem <- function(bbox, key) {
@@ -271,46 +393,6 @@ get_chm <- function(bbox, min_height) {
   return(list(filteredCHM, binaryCHM))
 }
 
-get_gvi <- function(dsm, p, height, r, building, binary_chm) {
-  tryCatch({
-    # Viewshed
-    v <- viewscape::compute_viewshed(dsm = dsm, viewpoints = p,
-                                     offset_viewpoint = height,
-                                     r = r
-                                    )
-    # Viewshed area
-    v_area <- length(as.vector(v@visible[v@visible == 1])) * v@resolution[1]^2
-    # Visible canopy area
-    canopy_proportion <- viewscape::calculate_feature(viewshed = v,
-                                                      feature = binary_chm,
-                                                      type = 2,
-                                                      exclude_value = 0)
-    canopy_area <- v_area * canopy_proportion
-
-    # Compute GVI (allow >1 if canopy exceeds viewshed minus building)
-    # print(paste0("building area: ", as.numeric(building$g_area),
-    #              "; viewshed area: ", v_area,
-    #              "; visible green area: ", canopy_area,
-    #              "; canopy proportion: ", canopy_proportion
-    #              )
-    #       )
-    gvi <- canopy_area / max(v_area - building$g_area, 1e-6)  # use small constant to avoid division by 0
-    gvi <- min(gvi, 1)  # cap at 1 if desired
-
-    return(gvi)
-  }, error = function(e) {
-    stop(sprintf("GVI calculation failed: %s", e$message))
-  })
-}
-# Note:
-# In fact, if the building itself occupies nearly the entire viewshed,
-# or the canopy overlaps very closely, v_area - building$g_area could be ≤ 0,
-# yet still surrounded by trees — in which case GVI = 1 is conceptually valid.
-
-# max(v_area - building$g_area, 1e-6) prevents division by zero while allowing close overlap
-# min(gvi, 1) caps the value at 1 if needed for interpretation as a proportion
-# Still returns 0 if the viewshed fails or has no values
-
 #' @noMd
 merge_elev <- function(building, dem, chm=NULL) {
   # prioritize layers:  (chm >) building > dem
@@ -357,6 +439,7 @@ get_bbox <- function(x) {
   return(bbox)
 }
 
+#' @noMd
 bbox_poly_to_list <- function(bbox) {
   coor <- sf::st_coordinates(bbox)
   return(
@@ -381,4 +464,13 @@ unify_layers <- function(bbox, ...) {
   })
 
   return(aligned_layers)
+}
+
+#### utils ####
+time_taken <- function(process_time) {
+  if (process_time >= 60) {
+    cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time/60), " minutes."))
+  } else {
+    cli::cli_alert_success(paste0("Completed. Time taken: ", base::round(process_time), " seconds."))
+  }
 }
