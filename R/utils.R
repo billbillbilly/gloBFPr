@@ -210,7 +210,64 @@ get_gvi <- function(dsm, p, height, r, building, binary_chm) {
 # Still returns 0 if the viewshed fails or has no values
 
 #### Data collection and processing ####
+#' @noMd
+get_GHSpop <- function(bbox = NULL, year = NULL) {
+  # Store the original 'timeout' option and ensure it's reset upon function exit
+  original_timeout <- getOption('timeout')
+  on.exit(options(timeout = original_timeout), add = TRUE)
+  options(timeout=9999)
 
+  d_mode <- 'auto'
+  # check os
+  os <- Sys.info()[["sysname"]]
+  d_mode <- if (Sys.info()[["sysname"]] == "Windows") 'wb' else 'auto'
+
+  # GHS population grid
+  years <- c(2030, 2025, 2020, 2015, 2010, 2005, 2000, 1995, 1990, 1985, 1980, 1975)
+  result_list <- list()
+  temp_paths <- c()  # store paths for later cleanup
+
+  if (year %in% years) {
+    intersected_tiles <- ghsl_tiles[sf::st_intersects(ghsl_tiles, bbox, sparse = FALSE), ]
+    for (i in seq_len(nrow(intersected_tiles))) {
+      temp_zip <- tempfile(fileext = ".zip")
+      url_ <- get_GHSurl(year, intersected_tiles$tile_id[i], 'pop')
+      utils::download.file(url_,
+                           destfile = temp_zip,
+                           mode = d_mode,
+                           quiet = TRUE)
+      unzip_dir <- tempfile()
+      utils::unzip(temp_zip, exdir = unzip_dir)
+      tif_files <- list.files(unzip_dir, pattern = "\\.tif$", full.names = TRUE)
+      if (length(tif_files) == 0) next
+      rast_data <- terra::rast(tif_files[1])
+      result_list[[length(result_list) + 1]] <- rast_data
+      temp_paths <- c(temp_paths, temp_zip, unzip_dir)
+      # unlink(c(temp_zip, unzip_dir), recursive = TRUE)
+    }
+    if (length(result_list) == 0) {
+      stop("No population rasters downloaded")
+    }
+    cli::cli_alert_success('Finished downloading population data')
+
+    # Combine all into one terra raster object
+    r <- if (length(result_list) == 1) result_list[[1]] else do.call(terra::merge, result_list)
+
+    # reproject raster
+    utm_crs <- get_utm_crs(bbox)
+    r <- terra::project(r, paste0('EPSG:', utm_crs), method = 'near')
+
+    # calculate population density
+    r <- r / (100*100)
+
+    on.exit(unlink(temp_paths, recursive = TRUE), add = TRUE)
+    return(r)
+  } else {
+    stop(sprintf("Input year %d is not in allowed range. Skipping.", year))
+  }
+}
+
+#' @noMd
 get_GHSres <- function(bbox = NULL, year = NULL) {
   # Store the original 'timeout' option and ensure it's reset upon function exit
   original_timeout <- getOption('timeout')
@@ -233,7 +290,7 @@ get_GHSres <- function(bbox = NULL, year = NULL) {
     for (i in seq_len(nrow(intersected_tiles))) {
       temp_total_zip <- tempfile(fileext = ".zip")
       temp_nres_zip <- tempfile(fileext = ".zip")
-      urls <- get_GHSurl(year, intersected_tiles$tile_id[i])
+      urls <- get_GHSurl(year, intersected_tiles$tile_id[i], type = 'b_surf')
       utils::download.file(urls[[1]],
                            destfile = temp_total_zip,
                            mode = d_mode,
@@ -259,8 +316,7 @@ get_GHSres <- function(bbox = NULL, year = NULL) {
     }
 
     if (length(result_list_total) == 0) {
-      base::warning("No building surface raster downloaded. Returning original polygons.")
-      return(projected_poly)
+      stop("No building surface raster downloaded")
     }
 
     # Combine all into one terra raster object
