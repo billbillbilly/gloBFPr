@@ -450,6 +450,54 @@ get_chm <- function(bbox, min_height) {
 }
 
 #' @noMd
+get_greenspace <- function(bbox = NULL, buffer = NULL,
+                           type = NULL, zoom = 17, year = NULL) {
+  if (type == "metachm") {
+    g <- get_chm(bbox)
+  } else if (type == "esri") {
+    g <- greenSD::get_tile_green(bbox = bbox, zoom = zoom,
+                                 provider = "esri")
+    utm_crs <- get_utm_crs(bbox)
+    g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
+  } else if (type == "dentinel2") {
+    g <- greenSD::get_tile_green(bbox = bbox, zoom = zoom,
+                                 provider = "eox", year = year)
+    utm_crs <- get_utm_crs(bbox)
+    g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
+  }
+  return(terra::crop(g, terra::vect(buffer), mask = TRUE))
+}
+
+#' @noMd
+filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
+  stopifnot(inherits(r, "SpatRaster"))
+  if (!unit %in% c("m2", "ha", "km2")) stop("unit must be 'm2','ha','km2'.")
+
+  # patch
+  greens <- terra::ifel(r == 1, 1, NA)
+  cl <- terra::patches(greens, directions = directions)
+
+  # Cell area in m^2 (works for lon/lat and projected)
+  cell_area_m2 <- terra::cellSize(cl, unit = "m")
+  # Sum area per patch (zonal)
+  z <- terra::zonal(cell_area_m2, cl, fun = "sum", na.rm = TRUE)  # columns: zone, sum
+
+  # Map patch area back to each cell
+  area_r <- terra::subs(cl, z, by = "zone", which = "sum")
+
+  # Threshold (convert min_area to m^2)
+  thr_m2 <- switch(unit,
+                   m2  = min_area,
+                   ha  = min_area * 1e4,
+                   km2 = min_area * 1e6)
+  keep_mask <- !is.na(cl) & (area_r >= thr_m2)
+
+  out <- terra::ifel(keep_mask, 1, 0)
+  terra::names(out) <- "greenspace_filtered"
+  return(out)
+}
+
+#' @noMd
 merge_elev <- function(building, dem, chm=NULL) {
   # prioritize layers:  (chm >) building > dem
   bc <- terra::overlay(r1, building, fun = function(x, y) {
@@ -457,9 +505,32 @@ merge_elev <- function(building, dem, chm=NULL) {
   })
 }
 
+#' @importFrom sf st_buffer st_centroid
+#' @noMd
+get_buffer <- function(x = NULL, radius = NULL) {
+  bbox <- get_bbox(x)
+  utm_crs <- get_utm_crs(bbox)
+  x <- sf::st_transform(x, utm_crs)
+  ct <- sf::st_centroid(x)
+  buffer_ <- sf::st_buffer(ct, dist = radius) # utm
+  bbox <- get_bbox(buffer_) # WGS 84
+  return(list(buffer=buffer_, bbox=bbox, centroid=ct))
+}
+
 #### Projection tools ####
 #' @noMd
 get_utm_crs <- function(bbox) {
+  if (is.numeric(bbox) && length(bbox) == 4) {
+    bbox <- sf::st_as_sfc(
+      sf::st_bbox(
+        c(xmin = bbox[1],
+          ymin = bbox[2],
+          xmax = bbox[3],
+          ymax = bbox[4]),
+        crs = 4326
+      )
+    )
+  }
   centroid <- sf::st_centroid(sf::st_union(bbox))
   coords <- sf::st_coordinates(centroid)
   lon <- coords[1]

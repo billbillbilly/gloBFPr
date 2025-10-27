@@ -39,6 +39,7 @@ Imports:
     cli,
     dsmSearch,
     viewscape,
+    greenSD,
     nominatimlite,
     future,
     furrr
