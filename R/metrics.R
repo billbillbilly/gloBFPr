@@ -3,6 +3,7 @@
 #' @param x sf. building footprint polygon, typically output from [get_3dglobdf()]
 #' @note
 #' `x` must include a unique `id` field.
+#'
 #' @references
 #' Anna Labetski, Stelios Vitalis, Filip Biljecki, Ken Arroyo Ohori &
 #' Jantien Stoter (2023): 3D building metrics for urban morphology.
@@ -657,8 +658,8 @@ get_bgvi <- function(x = NULL,
 #'
 #' @examples
 #' result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
-#'                                  datasource = "metachm",
-#'                                  unit = "m2")
+#'                            datasource = "metachm",
+#'                            unit = "m2")
 #'
 
 get_dng <- function(x = NULL,

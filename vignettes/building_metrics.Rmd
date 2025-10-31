@@ -32,8 +32,8 @@ result <- gloBFPr::get_neighbors(result, radius = 500)
 ## Greenery aaccessibility
 
 ```{r eval=FALSE}
-result <- gloBFPr::get_green_acc(result, 
-                                 min_tree_height = 2, 
-                                 radius = 800,
-                                 key = '')
+# result <- gloBFPr::get_green_acc(result, 
+#                                  min_tree_height = 2, 
+#                                  radius = 800,
+#                                  key = '')
 ```

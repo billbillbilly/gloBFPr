@@ -465,7 +465,12 @@ get_greenspace <- function(bbox = NULL, buffer = NULL,
     utm_crs <- get_utm_crs(bbox)
     g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
   }
-  return(terra::crop(g, terra::vect(buffer), mask = TRUE))
+  if (is.null(buffer)) {
+    return(g)
+  } else {
+    return(terra::crop(g, terra::vect(buffer), mask = TRUE))
+  }
+
 }
 
 #' @noMd
@@ -489,7 +494,8 @@ filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
   thr_m2 <- switch(unit,
                    m2  = min_area,
                    ha  = min_area * 1e4,
-                   km2 = min_area * 1e6)
+                   km2 = min_area * 1e6
+                   )
   keep_mask <- !is.na(cl) & (area_r >= thr_m2)
 
   out <- terra::ifel(keep_mask, 1, 0)
