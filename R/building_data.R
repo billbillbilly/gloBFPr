@@ -119,10 +119,9 @@ search_3dglobdf <- function(bbox=NULL,
   # check os
   os <- Sys.info()[["sysname"]]
   if (os == "Windows") {
-    d_mode <- 'wb'
+    d_mode <- 'wininet'
   }
 
-  cli::cli_alert_info('Start downloading data ...')
   # Store the original 'timeout' option and ensure it's reset upon function exit
   original_timeout <- getOption('timeout')
   on.exit(options(timeout = original_timeout), add = TRUE)
@@ -131,7 +130,7 @@ search_3dglobdf <- function(bbox=NULL,
     temp_zip <- tempfile(fileext = ".zip")
     utils::download.file(intersecting$download_url[i],
                          destfile = temp_zip,
-                         mode = d_mode,
+                         method = d_mode,
                          quiet = TRUE)
 
     unzip_dir <- tempfile()
@@ -181,7 +180,7 @@ search_3dglobdf <- function(bbox=NULL,
   if(out_type == 'poly') {
     end_time <- Sys.time()
     process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-    time_taken(process_time)
+    if (quiet) time_taken(process_time)
     return(all_data)
   }
 
@@ -189,39 +188,36 @@ search_3dglobdf <- function(bbox=NULL,
   if (out_type %in% c("binary_rast", "graduated_rast", "rast", "all")) {
     if (isTRUE(mask) || out_type == 'binary_rast' || out_type == 'all') {
       binary <- rasterize_binary(all_data, bbox, res=cell_size)
-      cli::cli_alert_success('Generated binary building footprints raster')
     }
 
     if (isTRUE(mask) && out_type != "binary_rast") {
       graduated <- rasterize_height(all_data, bbox, res=cell_size, mask=binary)
-      cli::cli_alert_success('Generated masked building footprints raster')
     } else {
       graduated <- rasterize_height(all_data, bbox, res=cell_size)
-      cli::cli_alert_success('Generated building height raster')
     }
 
     if (out_type == "binary_rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      time_taken(process_time)
+      if (quiet) time_taken(process_time)
       return(binary)
     }
     if (out_type == "graduated_rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      time_taken(process_time)
+      if (quiet) time_taken(process_time)
       return(graduated)
     }
     if (out_type == "rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      time_taken(process_time)
+      if (quiet) time_taken(process_time)
       return(list(binary = binary, graduated = graduated))
     }
     if (out_type == "all") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      time_taken(process_time)
+      if (quiet) time_taken(process_time)
       return(list(poly = all_data, binary = binary, graduated = graduated))
     }
   }
@@ -233,7 +229,7 @@ search_3dglobdf <- function(bbox=NULL,
 #' @description
 #' Generate digital surface model using multiple datasets, including building height map,
 #' canopy height map, and terrain model.
-#' @param x sf. building footprint polygon, typically output from [get_3dglobdf()]
+#' @param x sf. building footprint polygon, typically output from [search_3dglobdf()]
 #' @examples
 #' \donttest{
 #'  example <- gloBFPr::globfp_example

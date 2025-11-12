@@ -1,6 +1,6 @@
 #' @name get_metrics
 #' @title get_metrics
-#' @param x sf. building footprint polygon, typically output from [get_3dglobdf()]
+#' @param x sf. building footprint polygon, typically output from [search_3dglobdf()]
 #' @note
 #' `x` must include a unique `id` field.
 #'
@@ -27,9 +27,8 @@
 #' International Journal of Digital Earth, 17(1).
 #'
 #' @importFrom terra as.points viewshed cellSize ifel terraOptions
-#' @importFrom sf st_as_sf st_nearest_feature st_distance st_centroid st_coordinates st_area
+#' @importFrom sf st_as_sf st_nearest_feature st_distance st_centroid st_coordinates st_area st_perimeter
 #' @importFrom sf st_minimum_rotated_rectangle
-#' @importFrom lwgeom st_perimeter
 #' @importFrom terra merge
 #' @importFrom future plan multisession sequential multicore availableCores
 #' @importFrom furrr future_map furrr_options
@@ -97,7 +96,7 @@ get_morphology <- function(x = NULL, quiet = FALSE) {
   #--- Properties ---
   cli::cli_alert_info('Start computing geometric properties ...')
   projected_poly$g_area <- as.numeric(sf::st_area(projected_poly))
-  projected_poly$pmeter <- as.numeric(lwgeom::st_perimeter(projected_poly))
+  projected_poly$pmeter <- as.numeric(sf::st_perimeter(projected_poly))
   projected_poly$v_surf <- projected_poly$pmeter * projected_poly$Height
   projected_poly$t_surf <- projected_poly$v_surf + projected_poly$g_area
   projected_poly$vol <- projected_poly$g_area * projected_poly$Height
@@ -660,7 +659,8 @@ get_bgvi <- function(x = NULL,
 #' result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
 #'                            datasource = "metachm",
 #'                            unit = "m2")
-#'
+#' @export
+#' @rdname get_metrics
 
 get_dng <- function(x = NULL,
                      datasource = NULL,

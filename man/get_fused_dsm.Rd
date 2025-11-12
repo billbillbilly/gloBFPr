@@ -7,7 +7,7 @@
 get_fused_dsm(x = NULL, min_tree_height = 2, key = NULL)
 }
 \arguments{
-\item{x}{sf. building footprint polygon, typically output from \code{\link[=get_3dglobdf]{get_3dglobdf()}}}
+\item{x}{sf. building footprint polygon, typically output from \code{\link[=search_3dglobdf]{search_3dglobdf()}}}
 }
 \description{
 Generate digital surface model using multiple datasets, including building height map,

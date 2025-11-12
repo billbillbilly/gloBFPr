@@ -6,46 +6,88 @@
 \alias{get_pop_density}
 \alias{get_residential}
 \alias{get_neighbors}
-\alias{get_green_acc}
+\alias{get_bgvi}
+\alias{get_dng}
 \title{get_metrics}
 \usage{
-get_morphology(x = NULL)
+get_morphology(x = NULL, quiet = FALSE)
 
 get_pop_density(x = NULL, year = 2025)
 
-get_residential(x = NULL, year = NULL)
+get_residential(x = NULL, year = NULL, threshold = 80)
 
 get_neighbors(x = NULL, radius = 500)
 
-get_green_acc(
+get_bgvi(
   x = NULL,
+  datasource = NULL,
   min_tree_height = 2,
+  zoom = 17,
   radius = 800,
+  year = NULL,
   floor = FALSE,
   key = NULL
 )
+
+get_dng(
+  x = NULL,
+  datasource = NULL,
+  min_tree_height = 2,
+  zoom = 17,
+  radius = 800,
+  min_area = 500,
+  unit = c("m2", "ha", "km2"),
+  year = NULL
+)
 }
 \arguments{
-\item{x}{sf. building footprint polygon, typically output from \code{\link[=get_3dglobdf]{get_3dglobdf()}}}
+\item{x}{sf. building footprint polygon, typically output from \code{\link[=search_3dglobdf]{search_3dglobdf()}}}
 
-\item{year}{numeric. (only required for \code{get_pop_density}) Year of the GHSL
-dataset to use. Must be one of: 1975, 1980, 1985, 1990, 1995, 2000, 2005,
-2010, 2015, 2020, 2025, or 2030. Default is 2025.}
+\item{year}{numeric. The desired year for Sentinel-2 cloudless mosaic
+tiles. (This has to be specified when \code{datasource = "dentinel2"})}
 
-\item{radius}{numeric. (only required for \code{get_neighbors} and \code{get_green_acc})
-A numeric value specifying the buffer radius (meters) used to define
-local neighborhoods and visible area. Default for \code{get_neighbors} and
-\code{get_green_acc} is respectfully 500 and 800.}
+\item{threshold}{numeric. threshould (\%) for decide whether a building is
+residential or not. For example, if \code{threshold = 70}, a building, located in
+a cell with more than 70\% is residential building footprint area, is classified
+as residential.}
 
-\item{min_tree_height}{numeric. (only required for \code{get_green_acc})
-Minimum height threshold (in meters) to classify vegetation as trees in the CHM.
-Default is 2.}
+\item{radius}{numeric. (only required for \code{get_neighbors}, \code{get_gbvi}, and
+\code{get_dng})
+A numeric value specifying the buffer radius (in meters) used to define
+the proximity of a building footprint centroid. Default for \code{get_neighbors}, and
+\code{get_gbvi} and \code{get_dng} is respectfully 500 and 800.}
 
-\item{floor}{logical. (only required for \code{get_green_acc}) Whether to compute
-Green View Index (GVI) for each floor level based on estimated number of floors.
-Default is \code{FALSE}.}
+\item{datasource}{character. The data source for computing greenspace, including:
+\itemize{
+\item \code{metachm}:
+\item \code{esri}:
+\item \code{dentinel2}:
+}}
 
-\item{key}{character. (only required for \code{get_green_acc}) API key of OpenTopography.}
+\item{min_tree_height}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
+When \code{datasource = "metachm"}, minimum height threshold (in meters) to classify
+vegetation as trees in the CHM. Default is 2.}
+
+\item{zoom}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
+Zoom level of map tile when \code{datasource = "esri"} or \code{datasource = "dentinel2"}.
+The default is \code{17}. The higher level of zoom will lead to higher resolution
+of greenspace data for computing BGVI or DNG.}
+
+\item{floor}{logical. (only required for \code{get_bgvi})
+Whether to compute Building Green View Index (BGVI) for each floor level
+based on estimated number of floors. Default is \code{FALSE}.}
+
+\item{key}{character. (only required for \code{get_bgvi})
+API key of OpenTopography.}
+
+\item{min_area}{numeric. (only required for \code{get_dng}) The minimum area
+(the unit is defined by \code{unit}) of greenspace patches within the proximity of
+a building.
+For example, when \code{min_area = 500}, any greenspace patches with area less than
+500 square meter will be excluded.}
+
+\item{unit}{character. (only required for \code{get_dng}) The unit for
+\code{min_area}: 'm2','ha', and 'km2'.}
 }
 \value{
 \code{get_morphology} returns an \code{sf} object identical to input \code{x},
@@ -76,7 +118,7 @@ with an added column:
 at the centroid of each building polygon.
 }
 
-returns an \code{sf} object identical to input \code{x},
+\code{get_residential} returns an \code{sf} object identical to input \code{x},
 with additional columns :
 \code{res}: logical. Whether the building is residential or not.
 
@@ -89,16 +131,19 @@ to neighboring building centroids.
 \item \code{sd_ndist}: Standard deviation of those distances.
 }
 
-\code{get_neighbors} returns an \code{sf} object identical to input \code{x},
+\code{get_bgvi} returns an \code{sf} object identical to input \code{x},
 with additional columns for:
 \itemize{
-\item \code{dng}: Distance to nearest green space (tree canopy pixe)l (in meters).
-\item \code{mean_gvi}: Mean Green View Index value (0 to 1) from selected height(s).
+\item \code{mean_gvi}: Mean Building Green View Index value (0 to 1) from selected height(s).
 \item \code{min_gvi}, \code{max_gvi}, \code{sd_gvi}: Minimum, maximum,
 and standard deviation of Green View Index (GVI) (if \code{floor = TRUE}).
 \item \code{estimated_floors}: Estimated number of floors based on building height
 (if \code{floor = TRUE}).
 }
+
+\code{get_dng} returns an \code{sf} object identical to input \code{x},
+with an additional column:
+\code{dng}: Distance to nearest green space (tree canopy pixe)l (in meters).
 }
 \description{
 \code{get_morphology}: Computes a set of morphological properties and geometric descriptors for each building footprint polygon.
@@ -116,12 +161,16 @@ Global Human Settlement Layer (GHSL) built-up surface data
 deviation of centroid distances, based on a fixed-radius buffer and
 Voronoi-based adjacency.
 
-\code{get_green_acc}: Calculate visual and distance accessibility of greenery for each building volume
+\code{get_bgvi}: Calculate the Building Green View Index (BGVI) for each building volume
+
+\code{get_dng}: Calculate the distance to the nearest greenspace (DNG) patch
+for each building volume
 }
 \note{
 \code{x} must include a unique \code{id} field.
 
-To request an OpenTopography API token, please visit: \url{https://portal.opentopography.org/requestService?service=api}
+To request an OpenTopography API token, please visit:
+\url{https://portal.opentopography.org/requestService?service=api}
 
 USGS 3DEP 1m/10m raster dataset is currently restricted to academic users.
 Academic users can request access to these data via the OpenTopography portal.
@@ -142,9 +191,13 @@ result <- gloBFPr::get_residential(globfp_example[c(1:3),])
 
 result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
 \donttest{
-result <- gloBFPr::get_green_acc(globfp_example[c(1:3),], key = "YOUR_opentopography_API_KEY")
+result <- gloBFPr::get_bgvi(globfp_example[c(1:3),],
+                            key = "YOUR_opentopography_API_KEY")
 }
 
+result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
+                           datasource = "metachm",
+                           unit = "m2")
 }
 \references{
 Anna Labetski, Stelios Vitalis, Filip Biljecki, Ken Arroyo Ohori &
@@ -167,4 +220,9 @@ https://doi.org/10.1038/s41597-023-02691-1
 Essential background in Pesaresi, M. et al. (2024) "Advances on the Global Human
 Settlement Layer by joint assessment of Earth Observation and population survey data",
 International Journal of Digital Earth, 17(1).
+
+Qi, L., Hu, Y., Bu, R., Xiong, Z., Li, B., Zhang, C., ... & Li, C. (2024).
+Spatial-temporal patterns and influencing factors of the Building Green View
+Index: A new approach for quantifying 3D urban greenery visibility.
+Sustainable Cities and Society, 111, 105518.
 }

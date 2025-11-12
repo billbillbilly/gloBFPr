@@ -10,7 +10,8 @@ search_3dglobdf(
   crop = FALSE,
   out_type = "poly",
   mask = FALSE,
-  cell_size = 1
+  cell_size = 1,
+  quiet = TRUE
 )
 }
 \arguments{
@@ -40,6 +41,9 @@ is \code{"graduated_rast"}, \code{"rast"}, or \code{"all"}.}
 
 \item{cell_size}{numeric (optional). Default is 1. Only used when \code{out_type}
 is \code{"graduated_rast"}, \code{"rast"}, or \code{"all"}.}
+
+\item{quiet}{logical. If \code{TRUE}, console message will be returned.
+Default is \code{TRUE}.}
 
 \item{metadata}{sf. Typically output from \code{\link[=get_metadata]{get_metadata()}}, containing tile
 extents and download URLs.}
