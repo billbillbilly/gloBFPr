@@ -10,7 +10,13 @@
 \alias{get_dng}
 \title{get_metrics}
 \usage{
-get_morphology(x = NULL, quiet = FALSE)
+get_morphology(
+  x = NULL,
+  metrics = c("g_area", "pmeter", "v_surf", "t_surf", "vol", "obb_vol", "pa_ratio",
+    "rec", "rec", "fra", "cbn", "hem", "cnv", "me_dist", "mp_dist", "vol_exch", "elo_x",
+    "elo_y", "elo_z"),
+  quiet = FALSE
+)
 
 get_pop_density(x = NULL, year = 2025)
 
@@ -42,6 +48,8 @@ get_dng(
 }
 \arguments{
 \item{x}{sf. building footprint polygon, typically output from \code{\link[=search_3dglobdf]{search_3dglobdf()}}}
+
+\item{metrics}{vector. A list of metrics to be computed. All metrics will be computed by default.}
 
 \item{year}{numeric. The desired year for Sentinel-2 cloudless mosaic
 tiles. (This has to be specified when \code{datasource = "dentinel2"})}
