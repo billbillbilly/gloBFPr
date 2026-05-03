@@ -329,11 +329,14 @@ get_GHSres <- function(bbox = NULL, year = NULL) {
     # calculate residential
     r_res <- r_total - r_nres
     # crop
-    r_res <- terra::crop(r_res, terra::ext(terra::project(terra::vect(bbox), terra::crs(r_res))))
+    crop_ext <- terra::ext(terra::project(terra::vect(bbox), terra::crs(r_res)))
+    r_total <- terra::crop(r_total, crop_ext)
+    r_nres <- terra::crop(r_nres, crop_ext)
+    r_res <- terra::crop(r_res, crop_ext)
 
     # Ensure cleanup
     on.exit(unlink(temp_paths, recursive = TRUE), add = TRUE)
-    return(r_res)
+    return(list(total = r_total, nres = r_nres, res = r_res))
   } else {
     stop(sprintf("Input year %d is not in allowed range. Skipping.", year))
   }
@@ -451,16 +454,27 @@ get_chm <- function(bbox, min_height) {
 
 #' @noMd
 get_greenspace <- function(bbox = NULL, buffer = NULL,
-                           type = NULL, zoom = 17, year = NULL) {
+                           type = NULL, zoom = 17, year = NULL,
+                           min_tree_height = 2) {
+  if (inherits(type, "NULL")) {
+    stop("Please input greenspace datasource.")
+  }
+  type <- match.arg(type, c("metachm", "esri", "sentinel2"))
+  bbox_vector <- if (is.numeric(bbox) && length(bbox) == 4) {
+    bbox
+  } else {
+    bbox_poly_to_list(bbox)
+  }
+
   if (type == "metachm") {
-    g <- get_chm(bbox)
+    g <- get_chm(bbox_vector, min_tree_height)[[2]]
   } else if (type == "esri") {
-    g <- greenSD::get_tile_green(bbox = bbox, zoom = zoom,
+    g <- greenSD::get_tile_green(bbox = bbox_vector, zoom = zoom,
                                  provider = "esri")
     utm_crs <- get_utm_crs(bbox)
     g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
-  } else if (type == "dentinel2") {
-    g <- greenSD::get_tile_green(bbox = bbox, zoom = zoom,
+  } else if (type == "sentinel2") {
+    g <- greenSD::get_tile_green(bbox = bbox_vector, zoom = zoom,
                                  provider = "eox", year = year)
     utm_crs <- get_utm_crs(bbox)
     g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
@@ -476,7 +490,7 @@ get_greenspace <- function(bbox = NULL, buffer = NULL,
 #' @noMd
 filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
   stopifnot(inherits(r, "SpatRaster"))
-  if (!unit %in% c("m2", "ha", "km2")) stop("unit must be 'm2','ha','km2'.")
+  unit <- match.arg(unit, c("m2", "ha", "km2"))
 
   # patch
   greens <- terra::ifel(r == 1, 1, NA)
@@ -486,9 +500,14 @@ filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
   cell_area_m2 <- terra::cellSize(cl, unit = "m")
   # Sum area per patch (zonal)
   z <- terra::zonal(cell_area_m2, cl, fun = "sum", na.rm = TRUE)  # columns: zone, sum
+  if (is.null(z) || nrow(z) == 0) {
+    out <- terra::ifel(is.na(cl), 0, 0)
+    names(out) <- "greenspace_filtered"
+    return(out)
+  }
 
   # Map patch area back to each cell
-  area_r <- terra::subs(cl, z, by = "zone", which = "sum")
+  area_r <- terra::subst(cl, from = z[[1]], to = z[[2]])
 
   # Threshold (convert min_area to m^2)
   thr_m2 <- switch(unit,
@@ -499,7 +518,7 @@ filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
   keep_mask <- !is.na(cl) & (area_r >= thr_m2)
 
   out <- terra::ifel(keep_mask, 1, 0)
-  terra::names(out) <- "greenspace_filtered"
+  names(out) <- "greenspace_filtered"
   return(out)
 }
 
@@ -597,6 +616,71 @@ unify_layers <- function(bbox, ...) {
   })
 
   return(aligned_layers)
+}
+
+#' @noMd
+compute_gvi_per_building <- function(building,
+                                     dem_path,
+                                     chm_path,
+                                     binary_chm_path,
+                                     bh_all_path,
+                                     radius,
+                                     floor,
+                                     floor_step) {
+  # Read raster files inside each worker.
+  dem <- terra::rast(dem_path)
+  chm <- terra::rast(chm_path)
+  binary_chm <- terra::rast(binary_chm_path)
+  bh_all <- terra::rast(bh_all_path)
+
+  # Compute centroid
+  centroid <- suppressWarnings(sf::st_centroid(building$geometry))
+  p <- as.vector(sf::st_coordinates(centroid))
+
+  # Crop all rasters to the local viewshed radius.
+  buffer <- sf::st_buffer(centroid, dist = radius)
+  dem <- terra::crop(dem, terra::vect(buffer), mask = TRUE)
+  chm <- terra::crop(chm, terra::vect(buffer), mask = TRUE)
+  binary_chm <- terra::crop(binary_chm, terra::vect(buffer), mask = TRUE)
+  bh_all <- terra::crop(bh_all, terra::vect(buffer), mask = TRUE)
+
+  # Flatten the target building footprint: it is the observer, not an obstacle.
+  target_mask <- terra::rasterize(terra::vect(building), bh_all, field = 1, background = 0)
+  bh_without_target <- terra::ifel(target_mask == 1, 0, bh_all)
+  chm_without_target <- terra::ifel(target_mask == 1, 0, chm)
+  binary_chm <- terra::ifel(target_mask == 1, 0, binary_chm)
+
+  surface <- terra::ifel(chm_without_target > bh_without_target,
+                         chm_without_target,
+                         bh_without_target)
+  dsm_ <- dem + surface
+
+  if (isTRUE(floor)) {
+    floor_ids <- unique(c(seq.int(1L, building$estimated_floors, by = floor_step),
+                          building$estimated_floors))
+    GVIs <- numeric(length(floor_ids))
+    for (j in seq_along(floor_ids)) {
+      height <- 1.7 + (floor_ids[j] - 1) * 3
+      GVIs[j] <- get_gvi(dsm_, p, height, radius, building, binary_chm)
+    }
+    return(list(
+      mean = mean(GVIs),
+      min = min(GVIs),
+      max = max(GVIs),
+      sd = if (length(GVIs) > 1) stats::sd(GVIs) else NA_real_
+    ))
+  } else {
+    height_bottom <- 1.7
+    if (building$Height < 6) {
+      mean_gvi <- get_gvi(dsm_, p, height_bottom, radius, building, binary_chm)
+    } else {
+      height_top <- 1.7 + building$Height - 3
+      gvi_top <- get_gvi(dsm_, p, height_top, radius, building, binary_chm)
+      gvi_bottom <- get_gvi(dsm_, p, height_bottom, radius, building, binary_chm)
+      mean_gvi <- mean(c(gvi_top, gvi_bottom))
+    }
+    return(list(mean = mean_gvi, min = NA_real_, max = NA_real_, sd = NA_real_))
+  }
 }
 
 #### utils ####

@@ -224,6 +224,11 @@ get_pop_density <- function(x = NULL, year = 2025) {
 #' `get_residential` returns an `sf` object identical to input \code{x},
 #' with additional columns :
 #' \code{res}: logical. Whether the building is residential or not.
+#' \code{res_pct}: numeric. Residential built-up surface percentage in the
+#' matched GHSL cell.
+#' \code{total_built_vals}, \code{nres_vals}, and \code{res_vals}: numeric.
+#' Extracted total, non-residential, and residential built-up surface values
+#' from the matched GHSL cell.
 #'
 #' @examples
 #' result <- gloBFPr::get_residential(globfp_example[c(1:3),])
@@ -253,31 +258,43 @@ get_residential <- function(x = NULL, year = NULL, threshold = 80) {
   projected_poly$g_area <- as.numeric(sf::st_area(projected_poly$geometry))
 
   # calculate residential
-  r_res <- get_GHSres(bbox = bbox, year = year)
+  ghs <- get_GHSres(bbox = bbox, year = year)
+  if (!all(c("total", "nres", "res") %in% names(ghs))) {
+    stop("`get_GHSres()` must return total, nres, and res rasters.")
+  }
 
   # use all centroids of projected_poly to extract value from rasters
-  res_vals <- suppressWarnings(
-    terra::extract(r_res, terra::vect(sf::st_centroid(projected_poly)),
-                     raw = TRUE, ID = FALSE)[, 1]
+  centroids <- terra::vect(sf::st_centroid(projected_poly))
+  total_vals <- suppressWarnings(
+    terra::extract(ghs$total, centroids, raw = TRUE, ID = FALSE)[, 1]
   )
   nres_vals <- suppressWarnings(
-    terra::extract(r_nres, terra::vect(sf::st_centroid(projected_poly)),
-                   raw = TRUE, ID = FALSE)[, 1]
+    terra::extract(ghs$nres, centroids, raw = TRUE, ID = FALSE)[, 1]
   )
-  # link building surface area back to projected_poly
-  projected_poly$res_vals <- res_vals
-  projected_poly$res_delta <- projected_poly$res_vals - projected_poly$g_area
-  # classify residential building
-  projected_poly[projected_poly$res_delta > 0,]$res <- TRUE
-  projected_poly[projected_poly$res_vals <= threshold,]$res <- FALSE
+  res_vals <- suppressWarnings(
+    terra::extract(ghs$res, centroids, raw = TRUE, ID = FALSE)[, 1]
+  )
 
-  cli::cli_alert_success('Finished estimating residnetial buildings')
+  # link building surface area back to projected_poly
+  projected_poly$total_built_vals <- total_vals
+  projected_poly$nres_vals <- nres_vals
+  projected_poly$res_vals <- res_vals
+  projected_poly$res_pct <- ifelse(
+    !is.na(total_vals) & total_vals > 0,
+    100 * res_vals / total_vals,
+    NA_real_
+  )
+
+  # classify residential building
+  projected_poly$res <- !is.na(projected_poly$res_pct) &
+    projected_poly$total_built_vals > 0 &
+    projected_poly$res_pct >= threshold
+
+  cli::cli_alert_success('Finished estimating residential buildings')
   end_time <- Sys.time()
   process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
   time_taken(process_time)
 
-  # Ensure cleanup
-  on.exit(unlink(temp_paths, recursive = TRUE), add = TRUE)
   return(projected_poly)
 }
 
@@ -421,24 +438,31 @@ get_neighbors <- function(x = NULL, radius = 500) {
 
 #' @description
 #' `get_bgvi`: Calculate the Building Green View Index (BGVI) for each building volume
-#' @param datasource character. The data source for computing greenspace, including:
+#' @param datasource character. The canopy height source for computing BGVI.
+#' Currently only \code{"metachm"} is supported because BGVI builds a DSM.
+#' Other 2D greenery sources are available for \code{get_dng()}.
+#' Previously documented options included:
 #' \itemize{
 #'  \item \code{metachm}:
-#'  \item \code{esri}:
-#'  \item \code{dentinel2}:
 #' }
 #' @param min_tree_height numeric. (only required for `get_bgvi` and `get_dng`)
 #' When `datasource = "metachm"`, minimum height threshold (in meters) to classify
 #' vegetation as trees in the CHM. Default is 2.
 #' @param zoom numeric. (only required for `get_bgvi` and `get_dng`)
-#' Zoom level of map tile when `datasource = "esri"` or `datasource = "dentinel2"`.
+#' Zoom level of map tile when `datasource = "esri"` or `datasource = "sentinel2"`.
 #' The default is `17`. The higher level of zoom will lead to higher resolution
 #' of greenspace data for computing BGVI or DNG.
 #' @param year numeric. The desired year for Sentinel-2 cloudless mosaic
-#' tiles. (This has to be specified when `datasource = "dentinel2"`)
+#' tiles. (This has to be specified when `datasource = "sentinel2"`)
 #' @param floor logical. (only required for `get_bgvi`)
 #' Whether to compute Building Green View Index (BGVI) for each floor level
 #' based on estimated number of floors. Default is `FALSE`.
+#' @param floor_step integer. (only required for `get_bgvi` when
+#' \code{floor = TRUE}) Compute GVI every \code{floor_step} floors. The top
+#' estimated floor is always included. Default is \code{1}, meaning every floor.
+#' @param workers integer. (only required for `get_bgvi`) Number of parallel
+#' workers. Defaults to one fewer than available cores, capped at 4. Use
+#' \code{workers = 1} to run sequentially and reduce memory pressure.
 #' @param key character. (only required for `get_bgvi`)
 #' API key of OpenTopography.
 #'
@@ -479,12 +503,14 @@ get_neighbors <- function(x = NULL, radius = 500) {
 #' @rdname get_metrics
 
 get_bgvi <- function(x = NULL,
-                     datasource = NULL,
+                     datasource = "metachm",
                      min_tree_height = 2,
                      zoom = 17,
                      radius = 800,
                      year = NULL,
                      floor = FALSE,
+                     floor_step = 1,
+                     workers = NULL,
                      key = NULL) {
   if (inherits(x, 'NULL')) {
     cli::cli_alert_info("Please input building footprint polygon generated by `search_3dglobdf()`.")
@@ -506,13 +532,24 @@ get_bgvi <- function(x = NULL,
   terra::terraOptions(progress=0)
   on.exit(terra::terraOptions(progress=3), add = TRUE)
 
-  workers <- as.numeric(future::availableCores())
+  datasource <- match.arg(datasource, "metachm")
+  floor_step <- as.integer(floor_step[1])
+  if (is.na(floor_step) || floor_step < 1L) floor_step <- 1L
+
+  if (inherits(workers, "NULL")) {
+    workers <- min(max(1, as.numeric(future::availableCores()) - 1), 4)
+  } else {
+    workers <- as.integer(workers[1])
+    if (is.na(workers) || workers < 1L) workers <- 1L
+  }
   # Set future plan depending on OS
   os <- Sys.info()[["sysname"]]
-  if (os == "Windows" || isFALSE(parallelly::supportsMulticore())) {
-    future::plan(future::multisession, workers = workers - 1)
+  if (workers == 1) {
+    future::plan(future::sequential)
+  } else if (os == "Windows" || isFALSE(parallelly::supportsMulticore())) {
+    future::plan(future::multisession, workers = workers)
   } else {
-    future::plan(future::multicore, workers = workers - 1)
+    future::plan(future::multicore, workers = workers)
   }
   on.exit(future::plan(future::sequential), add = TRUE)
 
@@ -527,13 +564,6 @@ get_bgvi <- function(x = NULL,
   cli::cli_alert_info('Start downloading canopy height and DEM ...')
   chm_layers <- suppressMessages(get_chm(bbox_vector, min_tree_height))
   dem <- get_dem(bbox_vector, key)
-
-  # cli::cli_alert_info('Start calculating Green View Idex (GVI) ...')
-  chm_n_dem <- unify_layers(bbox, chm_layers[[1]], dem)
-  chm <- chm_n_dem[[1]]
-  binary_chm <- chm_layers[[2]]
-  dem <- chm_n_dem[[2]]
-  dsm <- chm + dem
 
   projected_poly$g_area <- as.numeric(sf::st_area(projected_poly))
 
@@ -550,53 +580,14 @@ get_bgvi <- function(x = NULL,
   }
   projected_poly$mean_gvi <- 0
 
-  # --- Helper Function ---
-  compute_gvi_per_building <- function(building,
-                                       other_buildings,
-                                       dsm_path,
-                                       binary_chm_path,
-                                       bbox,
-                                       radius,
-                                       floor) {
-    # Read raster files inside each worker
-    dsm <- terra::rast(dsm_path)
-    binary_chm <- terra::rast(binary_chm_path)
-
-    # Compute centroid
-    p <- suppressWarnings(sf::st_centroid(building$geometry))
-    p <- as.vector(sf::st_coordinates(p))
-
-    # Create building height surface
-    bh <- rasterize_height(other_buildings, bbox, terra::res(dsm)[1])
-    chm_n_bh <- unify_layers(bbox, dsm - terra::rast(binary_chm_path), bh)  # use dsm - binary_chm as CHM input
-    bh <- chm_n_bh[[2]]
-    dsm_ <- bh + dsm
-
-    if (isTRUE(floor)) {
-      GVIs <- numeric(building$estimated_floors)
-      for (h in seq_len(building$estimated_floors)) {
-        height <- 1.7 + (h - 1) * 3
-        GVIs[h] <- get_gvi(dsm_, p, height, radius, building, binary_chm)
-      }
-      return(list(
-        mean = mean(GVIs),
-        min = min(GVIs),
-        max = max(GVIs),
-        sd = if (length(GVIs) > 1) stats::sd(GVIs) else NA_real_
-      ))
-    } else {
-      height_bottom <- 1.7
-      if (building$Height < 6) {
-        mean_gvi <- get_gvi(dsm_, p, height_bottom, radius, building, binary_chm)
-      } else {
-        height_top <- 1.7 + building$Height - 3
-        gvi_top <- get_gvi(dsm_, p, height_top, radius, building, binary_chm)
-        gvi_bottom <- get_gvi(dsm_, p, height_bottom, radius, building, binary_chm)
-        mean_gvi <- mean(c(gvi_top, gvi_bottom))
-      }
-      return(list(mean = mean_gvi, min = NA_real_, max = NA_real_, sd = NA_real_))
-    }
-  }
+  # Build reusable, aligned AOI rasters once. Each target building then crops
+  # these rasters locally and flattens only its own footprint.
+  bh_all <- rasterize_height(projected_poly, bbox, terra::res(chm_layers[[1]])[1])
+  aligned_layers <- unify_layers(bbox, chm_layers[[1]], chm_layers[[2]], dem, bh_all)
+  chm <- aligned_layers[[1]]
+  binary_chm <- terra::ifel(aligned_layers[[2]] == 1, 1, 0)
+  dem <- aligned_layers[[3]]
+  bh_all <- aligned_layers[[4]]
 
   # --- Parallel Processing ---
   # cli::cli_alert_info('Preparing parallel processing ...')
@@ -604,28 +595,32 @@ get_bgvi <- function(x = NULL,
   building_list <- lapply(seq_len(nrow(projected_poly)), function(i) {
     utils::setTxtProgressBar(pb, i)
     list(
-      building = projected_poly[i, ],
-      other_buildings = projected_poly[-i, ]
+      building = projected_poly[i, ]
     )
   })
 
   # Save raster layers to disk to avoid pointer serialization issues
-  dsm_path <- tempfile(fileext = ".tif")
+  dem_path <- tempfile(fileext = ".tif")
+  chm_path <- tempfile(fileext = ".tif")
   binary_chm_path <- tempfile(fileext = ".tif")
-  terra::writeRaster(dsm, dsm_path, overwrite = TRUE)
+  bh_all_path <- tempfile(fileext = ".tif")
+  terra::writeRaster(dem, dem_path, overwrite = TRUE)
+  terra::writeRaster(chm, chm_path, overwrite = TRUE)
   terra::writeRaster(binary_chm, binary_chm_path, overwrite = TRUE)
-  on.exit(unlink(c(dsm_path, binary_chm_path)), add = TRUE)
+  terra::writeRaster(bh_all, bh_all_path, overwrite = TRUE)
+  on.exit(unlink(c(dem_path, chm_path, binary_chm_path, bh_all_path)), add = TRUE)
 
   gvi_results <- furrr::future_map(
     building_list,
     function(b) compute_gvi_per_building(
       building = b$building,
-      other_buildings = b$other_buildings,
-      dsm_path = dsm_path,
+      dem_path = dem_path,
+      chm_path = chm_path,
       binary_chm_path = binary_chm_path,
-      bbox = bbox,
+      bh_all_path = bh_all_path,
       radius = radius,
-      floor = floor
+      floor = floor,
+      floor_step = floor_step
     ),
     .options = furrr::furrr_options(seed = TRUE),
     .progress = TRUE
@@ -682,22 +677,30 @@ get_dng <- function(x = NULL,
     return(x)
   }
 
+  unit <- match.arg(unit)
+  if (inherits(datasource, 'NULL')) {
+    stop("Please input datasource: 'metachm', 'esri', or 'sentinel2'.")
+  }
+  datasource <- match.arg(datasource, c("metachm", "esri", "sentinel2"))
+
   bbox <- get_bbox(x)
   utm_crs <- get_utm_crs(bbox)
   projected_poly <- sf::st_transform(x, utm_crs)
-  projected_poly$dng <- 0
+  projected_poly$dng <- NA_real_
 
   for (i in seq_len(nrow(projected_poly))) {
     poly_ <- projected_poly[i, ]$geometry
     buffer_ <- get_buffer(x = poly_, radius = radius)
-    gs <- get_greenspace(buffer_$bbox, buffer_$buffer, datasource, zoom, year)
+    gs <- get_greenspace(buffer_$bbox, buffer_$buffer, datasource, zoom, year, min_tree_height)
     gs <- filter_patch_area(gs, min_area, unit = unit, directions = 8)
-    green_points <- terra::as.points(gs, na.rm = TRUE)
+    green_points <- terra::as.points(terra::ifel(gs == 1, 1, NA), na.rm = TRUE)
+    if (nrow(green_points) == 0) next
+
     green_points_sf <- sf::st_as_sf(green_points)
     nearest_index <- sf::st_nearest_feature(buffer_$centroid, green_points_sf)
     nearest_point <- green_points_sf[nearest_index, ]
     distance <- sf::st_distance(buffer_$centroid, nearest_point)
-    projected_poly$dng[i] <- distance
+    projected_poly$dng[i] <- as.numeric(distance)
   }
   return(projected_poly)
 }

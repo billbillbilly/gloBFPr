@@ -26,12 +26,14 @@ get_neighbors(x = NULL, radius = 500)
 
 get_bgvi(
   x = NULL,
-  datasource = NULL,
+  datasource = "metachm",
   min_tree_height = 2,
   zoom = 17,
   radius = 800,
   year = NULL,
   floor = FALSE,
+  floor_step = 1,
+  workers = NULL,
   key = NULL
 )
 
@@ -52,7 +54,7 @@ get_dng(
 \item{metrics}{vector. A list of metrics to be computed. All metrics will be computed by default.}
 
 \item{year}{numeric. The desired year for Sentinel-2 cloudless mosaic
-tiles. (This has to be specified when \code{datasource = "dentinel2"})}
+tiles. (This has to be specified when \code{datasource = "sentinel2"})}
 
 \item{threshold}{numeric. threshould (\%) for decide whether a building is
 residential or not. For example, if \code{threshold = 70}, a building, located in
@@ -65,11 +67,12 @@ A numeric value specifying the buffer radius (in meters) used to define
 the proximity of a building footprint centroid. Default for \code{get_neighbors}, and
 \code{get_gbvi} and \code{get_dng} is respectfully 500 and 800.}
 
-\item{datasource}{character. The data source for computing greenspace, including:
+\item{datasource}{character. The canopy height source for computing BGVI.
+Currently only \code{"metachm"} is supported because BGVI builds a DSM.
+Other 2D greenery sources are available for \code{get_dng()}.
+Previously documented options included:
 \itemize{
 \item \code{metachm}:
-\item \code{esri}:
-\item \code{dentinel2}:
 }}
 
 \item{min_tree_height}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
@@ -77,13 +80,21 @@ When \code{datasource = "metachm"}, minimum height threshold (in meters) to clas
 vegetation as trees in the CHM. Default is 2.}
 
 \item{zoom}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
-Zoom level of map tile when \code{datasource = "esri"} or \code{datasource = "dentinel2"}.
+Zoom level of map tile when \code{datasource = "esri"} or \code{datasource = "sentinel2"}.
 The default is \code{17}. The higher level of zoom will lead to higher resolution
 of greenspace data for computing BGVI or DNG.}
 
 \item{floor}{logical. (only required for \code{get_bgvi})
 Whether to compute Building Green View Index (BGVI) for each floor level
 based on estimated number of floors. Default is \code{FALSE}.}
+
+\item{floor_step}{integer. (only required for \code{get_bgvi} when
+\code{floor = TRUE}) Compute GVI every \code{floor_step} floors. The top
+estimated floor is always included. Default is \code{1}, meaning every floor.}
+
+\item{workers}{integer. (only required for \code{get_bgvi}) Number of parallel
+workers. Defaults to one fewer than available cores, capped at 4. Use
+\code{workers = 1} to run sequentially and reduce memory pressure.}
 
 \item{key}{character. (only required for \code{get_bgvi})
 API key of OpenTopography.}
@@ -129,6 +140,11 @@ at the centroid of each building polygon.
 \code{get_residential} returns an \code{sf} object identical to input \code{x},
 with additional columns :
 \code{res}: logical. Whether the building is residential or not.
+\code{res_pct}: numeric. Residential built-up surface percentage in the
+matched GHSL cell.
+\code{total_built_vals}, \code{nres_vals}, and \code{res_vals}: numeric.
+Extracted total, non-residential, and residential built-up surface values
+from the matched GHSL cell.
 
 \code{get_neighbors} returns an \code{sf} object identical to input \code{x},
 with additional columns for:
