@@ -18,11 +18,11 @@ to include more global Building Dataset in the future.
 <img src="images/cover.png" align="center" width="90%">
 
 ## Features
-🔍 Access tiled metadata of 3D-GloBFP dataset and search tiles by bounding box (BBOX) or area of interest
-
-⬇️ Download only the necessary files and retrieve building polygons and height attribute
-
-🌍 Generate rasters of binary presence or graduated height and output spatial data in sf or terra raster forma
+- Access tiled metadata of 3D-GloBFP dataset and search tiles by bounding box (BBOX) or area of interest
+- Download only the necessary files and retrieve building polygons and height attribute
+- Generate rasters of binary presence or graduated height and output spatial data in sf or terra raster format
+- Compute morphological, urban context, and greenspace accessibility metrics at an individual-building level
+- Analyze shadow and radiation using building data for the analysis of urban heat conditions
 
 ## Installation
 Install the development version:
@@ -31,25 +31,23 @@ Install the development version:
 install.packages("devtools")
 
 # Install from GitHub
-devtools::install_github("billbillbilly/gloBFPr")
+devtools::install_github("billbillbilly/gloBFPr@dev")
 ```
 
 The package will be on CRAN soon.
 
 ## Usage
-1. Load metadata
+1. Load
 
 ```r
 library(gloBFPr)
-metadata <- get_metadata()
 ```
 
 2. Search and download data by bounding box
 
 ```r
 bbox <- c(-83.065644,42.333792,-83.045217,42.346988)
-buildings_list <- search_3dglobdf(bbox = bbox,
-                                  metadata = metadata, 
+buildings_list <- search_3dglobdf(bbox = bbox, 
                                   out_type = "all", 
                                   # mask = TRUE,
                                   cell_size = 1)
@@ -84,7 +82,7 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 
 | Categories   | Metrics                             | Code      | Concept                                                                 |
 |--------------|-------------------------------------|-----------|-------------------------------------------------------------------------|
-| **Morphology** | Ground vertex count                 | `g_vcount` | Number of vertices on the building footprint polygon                    |
+| **Morphology** | Ground vertex count               | `g_vcount` | Number of vertices on the building footprint polygon                    |
 |              | Ground area                         | `g_area`   | Horizontal footprint area of the building                               |
 |              | Perimeter                           | `pmeter`  | Total boundary length of the footprint                                  |
 |              | Vertical surface                    | `v_surf`  | Estimated surface area of building walls                                |
@@ -103,12 +101,17 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 |              | Elongation ratio on X direction     | `elo_x`   | Shortest horizontal extent divided by height                            |
 |              | Elongation ratio on Y direction     | `elo_y`   | Longest horizontal extent divided by height                             |
 |              | Elongation ratio on Z direction     | `elo_z`   | Height relative to the maximum horizontal extent                        |
-| **Demography** | Population density per 10,000 m²     | `pop_den` | Number of people per 10,000 m² around the building                      |
+| **Demography** | Total population                     | `pop_total` | Estimated total population at the centroid cell or centroid buffer     |
+|                | Population density                   | `pop_den` | Estimated people per square meter at the centroid cell or buffer        |
 | **Neighbor**   | Number of adjacent buildings        | `n_count` | Count of nearby buildings based on proximity and Voronoi adjacency      |
 |                | Mean distance from the building     | `m_ndist` | Average distance to neighboring buildings                               |
+|                | Minimum distance from the building  | `min_ndist`| Closest neighboring building distance                                  |
+|                | Maximum distance from the building  | `max_ndist`| Farthest neighboring building distance                                 |
 |                | Standard deviation of distances     | `sd_ndist`| Variation in distances to neighboring buildings                         |
 | **Greenery**   | Distance to the nearest green space | `dng`     | Distance from building centroid to closest vegetation pixel             |
-|                | Mean Green View Index (GVI)         | `mean_gvi`| Average proportion of visible green canopy in viewshed                  |
+|                | Mean Green View Index (GVI)         | `mean_gvi`| Average proportion of visible greenery in viewshed                      |
+|                | Bottom Green View Index (GVI)       | `bottom_gvi`| GVI from the bottom viewpoint, 1.7 m above ground                     |
+|                | Top Green View Index (GVI)          | `top_gvi` | GVI from the top viewpoint; equals bottom GVI for short buildings       |
 |                | Minimum of Green View Index (GVI)   | `min_gvi` | Lowest GVI across all floor viewpoints                                  |
 |                | Maximum of GVI                      | `max_gvi` | Highest GVI across all floor viewpoints                                 |
 |                | Standard deviation of GVI           | `sd_gvi`  | Variation in greenery visibility across building height                 |

@@ -21,9 +21,49 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// building_shadow_height_cpp
+NumericVector building_shadow_height_cpp(NumericMatrix xy, List rings, IntegerVector ring_building, IntegerVector ring_part, LogicalVector ring_is_hole, NumericVector heights, double dx_unit, double dy_unit, double tan_elev);
+RcppExport SEXP _gloBFPr_building_shadow_height_cpp(SEXP xySEXP, SEXP ringsSEXP, SEXP ring_buildingSEXP, SEXP ring_partSEXP, SEXP ring_is_holeSEXP, SEXP heightsSEXP, SEXP dx_unitSEXP, SEXP dy_unitSEXP, SEXP tan_elevSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type xy(xySEXP);
+    Rcpp::traits::input_parameter< List >::type rings(ringsSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ring_building(ring_buildingSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ring_part(ring_partSEXP);
+    Rcpp::traits::input_parameter< LogicalVector >::type ring_is_hole(ring_is_holeSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type heights(heightsSEXP);
+    Rcpp::traits::input_parameter< double >::type dx_unit(dx_unitSEXP);
+    Rcpp::traits::input_parameter< double >::type dy_unit(dy_unitSEXP);
+    Rcpp::traits::input_parameter< double >::type tan_elev(tan_elevSEXP);
+    rcpp_result_gen = Rcpp::wrap(building_shadow_height_cpp(xy, rings, ring_building, ring_part, ring_is_hole, heights, dx_unit, dy_unit, tan_elev));
+    return rcpp_result_gen;
+END_RCPP
+}
+// canopy_shadow_height_cpp
+NumericVector canopy_shadow_height_cpp(NumericMatrix xy, NumericMatrix canopy_xy, NumericVector canopy_height, NumericVector canopy_ground, NumericVector target_ground, double dx_unit, double dy_unit, double tan_elev, double half_cell);
+RcppExport SEXP _gloBFPr_canopy_shadow_height_cpp(SEXP xySEXP, SEXP canopy_xySEXP, SEXP canopy_heightSEXP, SEXP canopy_groundSEXP, SEXP target_groundSEXP, SEXP dx_unitSEXP, SEXP dy_unitSEXP, SEXP tan_elevSEXP, SEXP half_cellSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type xy(xySEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type canopy_xy(canopy_xySEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type canopy_height(canopy_heightSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type canopy_ground(canopy_groundSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type target_ground(target_groundSEXP);
+    Rcpp::traits::input_parameter< double >::type dx_unit(dx_unitSEXP);
+    Rcpp::traits::input_parameter< double >::type dy_unit(dy_unitSEXP);
+    Rcpp::traits::input_parameter< double >::type tan_elev(tan_elevSEXP);
+    Rcpp::traits::input_parameter< double >::type half_cell(half_cellSEXP);
+    rcpp_result_gen = Rcpp::wrap(canopy_shadow_height_cpp(xy, canopy_xy, canopy_height, canopy_ground, target_ground, dx_unit, dy_unit, tan_elev, half_cell));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_gloBFPr_mean_pairwise_distance", (DL_FUNC) &_gloBFPr_mean_pairwise_distance, 1},
+    {"_gloBFPr_building_shadow_height_cpp", (DL_FUNC) &_gloBFPr_building_shadow_height_cpp, 9},
+    {"_gloBFPr_canopy_shadow_height_cpp", (DL_FUNC) &_gloBFPr_canopy_shadow_height_cpp, 9},
     {NULL, NULL, 0}
 };
 

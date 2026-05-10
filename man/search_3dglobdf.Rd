@@ -8,6 +8,8 @@ search_3dglobdf(
   bbox = NULL,
   place = NULL,
   crop = FALSE,
+  data_source = "GBF",
+  keep_source_id = FALSE,
   out_type = "poly",
   mask = FALSE,
   cell_size = 1,
@@ -24,6 +26,12 @@ e.g. ("1600 Pennsylvania Ave NW, Washington") or a vector of addresses
 
 \item{crop}{logical. If \code{TRUE}, the resulting building footprint geometries
 will be cropped to the input \code{bbox}. Default is \code{FALSE}.}
+
+\item{data_source}{character. Building data source to query. Use \code{"GBF"} for
+3D-GloBFP (default) or \code{"GBA"}/\code{"gba"} for GlobalBuildingAtlas.}
+
+\item{keep_source_id}{logical. If \code{TRUE}, keep the original source feature
+identifier as \code{source_id} when it is available. Default is \code{FALSE}.}
 
 \item{out_type}{character. Default is \code{'poly'}.
 Output type(s) to return. Options include:
@@ -42,16 +50,16 @@ is \code{"graduated_rast"}, \code{"rast"}, or \code{"all"}.}
 \item{cell_size}{numeric (optional). Default is 1. Only used when \code{out_type}
 is \code{"graduated_rast"}, \code{"rast"}, or \code{"all"}.}
 
-\item{quiet}{logical. If \code{TRUE}, console message will be returned.
+\item{quiet}{logical. If \code{TRUE}, suppress cli messages and progress output.
 Default is \code{TRUE}.}
-
-\item{metadata}{sf. Typically output from \code{\link[=get_metadata]{get_metadata()}}, containing tile
-extents and download URLs.}
 }
 \value{
 Varies based on \code{out_type}:
 \itemize{
-\item If \code{"poly"}: an \code{sf} object of building footprints.
+\item If \code{"poly"}: an \code{sf} object of building footprints. \code{MULTIPOLYGON}
+geometries are converted to \code{POLYGON} geometries while preserving one row
+per source feature. Polygons that touch or intersect share a \code{group_id},
+which can be used to treat fragmented rows as one building group.
 \item If \code{"binary_rast"}: a binary \code{SpatRaster} (\code{terra}) indicating building presence.
 \item If \code{"graduated_rast"}: a quantitative \code{SpatRaster} of building heights.
 \item If \code{"rast"}: a named list with two \code{SpatRaster} objects: \code{binary} and \code{graduated}.
@@ -59,9 +67,10 @@ Varies based on \code{out_type}:
 }
 }
 \description{
-Search and retrieve 3D-GloBFP tiles that intersect a given bounding box or
-area of interest (a city), with options to return vector or raster outputs including
-building polygons, binary presence rasters, and height-coded rasters.
+Search and retrieve 3D building footprint data from 3D-GloBFP or
+GlobalBuildingAtlas that intersect a given bounding box or area of interest
+(a city), with options to return vector or raster outputs including building
+polygons, binary presence rasters, and height-coded rasters.
 }
 \note{
 The downloading process may take some time, depending on the number and size
@@ -79,4 +88,8 @@ Che Yangzi, Li Xuecao, Liu Xiaoping, Wang Yuhao, Liao Weilin, Zheng Xianwei,
 Zhang Xucai, Xu Xiaocong, Shi Qian, Zhu Jiajun, Zhang Honghui, Yuan Hua, &
 Dai Yongjiu (2024). 3D-GloBFP: the first global three-dimensional building
 footprint dataset. Earth Syst. Sci. Data, 16, 5357-5374
+
+Zhu X. X., Chen S., Zhang F., Shi Y., & Wang Y. (2025).
+GlobalBuildingAtlas: an open global and complete dataset of building
+polygons, heights and LoD1 3D models. Earth Syst. Sci. Data, 17, 6647-6668.
 }

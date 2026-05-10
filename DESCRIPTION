@@ -1,7 +1,7 @@
 Package: gloBFPr
 Type: Package
-Title: Access Global Building Height Datasets
-Version: 1.0.0
+Title: Building Analysis Using Global Building Height Datasets
+Version: 2.0.0
 Authors@R: c(
     person(
       given = "Xiaohao",
@@ -14,8 +14,7 @@ Description: Automated access and analysis of multidimensional building profile
     3D building footprint datasets.
     It includes functions to retrieve building height tiles, compute a range of 
     multidimensional building morphology metrics, assess environmental context 
-    (e.g., greenery accessibility), and support spatial analysis for urban form 
-    studies.
+    (e.g., greenery accessibility), and support shadow/radiation analysis.
 License: MIT + file LICENSE
 URL: https://github.com/billbillbilly/gloBFPr
 BugReports: https://github.com/billbillbilly/gloBFPr/issues
@@ -41,6 +40,7 @@ Imports:
     viewscape,
     greenSD,
     nominatimlite,
+    parallelly,
     future,
     furrr
 Roxygen: list(markdown = TRUE)

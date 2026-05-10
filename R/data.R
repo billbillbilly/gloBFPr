@@ -19,3 +19,36 @@
 #' data(globfp_example)
 #' head(globfp_example)
 "globfp_example"
+
+#' Example DEM for the 3D-GloBFP sample
+#'
+#' A `terra::PackedSpatRaster` digital elevation model cropped to the bounding
+#' box of `globfp_example`. Convert it with `terra::rast()` before analysis.
+#'
+#' @format A `terra::PackedSpatRaster` with one layer named `dem`.
+#'
+#' @source OpenTopography / dsmSearch elevation data, downloaded for the
+#' `globfp_example` extent.
+#'
+#' @examples
+#' data(globfp_example_dem)
+#' dem <- terra::rast(globfp_example_dem)
+#' dem
+"globfp_example_dem"
+
+#' Example canopy height raster for the 3D-GloBFP sample
+#'
+#' A `terra::PackedSpatRaster` canopy height map cropped to the bounding box of
+#' `globfp_example` and aggregated from the source resolution for lightweight
+#' examples. Convert it with `terra::rast()` before analysis.
+#'
+#' @format A `terra::PackedSpatRaster` with one layer named `canopy_height`.
+#'
+#' @source metaCHM canopy height data via dsmSearch, downloaded for the
+#' `globfp_example` extent.
+#'
+#' @examples
+#' data(globfp_example_canopy_height)
+#' canopy_height <- terra::rast(globfp_example_canopy_height)
+#' canopy_height
+"globfp_example_canopy_height"

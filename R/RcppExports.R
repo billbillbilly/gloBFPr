@@ -5,3 +5,11 @@ mean_pairwise_distance <- function(coords) {
     .Call(`_gloBFPr_mean_pairwise_distance`, coords)
 }
 
+building_shadow_height_cpp <- function(xy, rings, ring_building, ring_part, ring_is_hole, heights, dx_unit, dy_unit, tan_elev) {
+    .Call(`_gloBFPr_building_shadow_height_cpp`, xy, rings, ring_building, ring_part, ring_is_hole, heights, dx_unit, dy_unit, tan_elev)
+}
+
+canopy_shadow_height_cpp <- function(xy, canopy_xy, canopy_height, canopy_ground, target_ground, dx_unit, dy_unit, tan_elev, half_cell) {
+    .Call(`_gloBFPr_canopy_shadow_height_cpp`, xy, canopy_xy, canopy_height, canopy_ground, target_ground, dx_unit, dy_unit, tan_elev, half_cell)
+}
+

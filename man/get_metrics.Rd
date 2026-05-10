@@ -18,23 +18,29 @@ get_morphology(
   quiet = FALSE
 )
 
-get_pop_density(x = NULL, year = 2025)
+get_pop_density(x = NULL, year = 2025, distance = NULL, quiet = FALSE)
 
-get_residential(x = NULL, year = NULL, threshold = 80)
+get_residential(x = NULL, year = NULL, threshold = 80, quiet = FALSE)
 
-get_neighbors(x = NULL, radius = 500)
+get_neighbors(x = NULL, radius = 500, quiet = FALSE)
 
 get_bgvi(
   x = NULL,
-  datasource = "metachm",
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = NULL,
+  datasource = NULL,
   min_tree_height = 2,
   zoom = 17,
   radius = 800,
   year = NULL,
   floor = FALSE,
-  floor_step = 1,
+  floor_step = 3,
+  short_building_threshold = 6,
+  field_of_view = 45,
+  directions = NULL,
   workers = NULL,
-  key = NULL
+  key = NULL,
+  quiet = FALSE
 )
 
 get_dng(
@@ -45,7 +51,8 @@ get_dng(
   radius = 800,
   min_area = 500,
   unit = c("m2", "ha", "km2"),
-  year = NULL
+  year = NULL,
+  quiet = FALSE
 )
 }
 \arguments{
@@ -53,8 +60,15 @@ get_dng(
 
 \item{metrics}{vector. A list of metrics to be computed. All metrics will be computed by default.}
 
+\item{quiet}{logical. If \code{TRUE}, suppress cli messages and progress bars.}
+
 \item{year}{numeric. The desired year for Sentinel-2 cloudless mosaic
-tiles. (This has to be specified when \code{datasource = "sentinel2"})}
+tiles. (This has to be specified when \code{datasource_greenspace = "sentinel2"})}
+
+\item{distance}{numeric. (optional, only used by \code{get_pop_density}) Buffer
+radius in meters around each building centroid for population aggregation.
+If \code{NULL}, population density is extracted from the GHSL cell containing the
+building centroid. Default is \code{NULL}.}
 
 \item{threshold}{numeric. threshould (\%) for decide whether a building is
 residential or not. For example, if \code{threshold = 70}, a building, located in
@@ -67,20 +81,28 @@ A numeric value specifying the buffer radius (in meters) used to define
 the proximity of a building footprint centroid. Default for \code{get_neighbors}, and
 \code{get_gbvi} and \code{get_dng} is respectfully 500 and 800.}
 
-\item{datasource}{character. The canopy height source for computing BGVI.
-Currently only \code{"metachm"} is supported because BGVI builds a DSM.
-Other 2D greenery sources are available for \code{get_dng()}.
-Previously documented options included:
-\itemize{
-\item \code{metachm}:
-}}
+\item{datasource_canopy_height}{character or \code{NULL}. Canopy height source for
+building the DSM and canopy green feature layer. Currently supports
+\code{"metachm"}, \code{"ethCHM"}, or \code{NULL}. If \code{NULL}, the DSM is built
+from buildings and DEM only.}
+
+\item{datasource_greenspace}{character or \code{NULL}. Optional 2D greenspace map
+tile source for the visible-green feature layer. Supports \code{"esri"} and
+\code{"sentinel2"}. If both canopy height and greenspace sources are supplied,
+the visible-green layer is the union of height-filtered canopy and 2D
+greenspace.}
+
+\item{datasource}{character or \code{NULL}. Deprecated compatibility argument for
+older calls to \code{get_bgvi()}. Use \code{datasource_canopy_height} and
+\code{datasource_greenspace} instead.}
 
 \item{min_tree_height}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
-When \code{datasource = "metachm"}, minimum height threshold (in meters) to classify
-vegetation as trees in the CHM. Default is 2.}
+When \code{datasource_canopy_height} is a canopy height source, minimum height threshold (in
+meters) to classify vegetation as trees in the CHM. Default is 2.}
 
 \item{zoom}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
-Zoom level of map tile when \code{datasource = "esri"} or \code{datasource = "sentinel2"}.
+Zoom level of map tile when \code{datasource_greenspace = "esri"} or
+\code{datasource_greenspace = "sentinel2"}.
 The default is \code{17}. The higher level of zoom will lead to higher resolution
 of greenspace data for computing BGVI or DNG.}
 
@@ -91,6 +113,20 @@ based on estimated number of floors. Default is \code{FALSE}.}
 \item{floor_step}{integer. (only required for \code{get_bgvi} when
 \code{floor = TRUE}) Compute GVI every \code{floor_step} floors. The top
 estimated floor is always included. Default is \code{1}, meaning every floor.}
+
+\item{short_building_threshold}{numeric. (only required for \code{get_bgvi})
+Height threshold in meters for deciding whether a building should use only
+the bottom viewpoint in non-floor mode. Default is 6.}
+
+\item{field_of_view}{numeric. (only required for directional \code{get_bgvi})
+Angular field of view in degrees for direction-specific GVI. Used only when
+\code{directions} is not \code{NULL}. Default is 45.}
+
+\item{directions}{character vector or \code{NULL}. Optional direction names for
+direction-specific GVI. Valid values are \code{"southwest"},
+\code{"southeast"}, \code{"northeast"}, \code{"northwest"}, \code{"north"},
+\code{"east"}, \code{"west"}, and \code{"south"}. If \code{NULL},
+\code{field_of_view} is ignored and only non-directional GVI columns are returned.}
 
 \item{workers}{integer. (only required for \code{get_bgvi}) Number of parallel
 workers. Defaults to one fewer than available cores, capped at 4. Use
@@ -129,12 +165,19 @@ with additional columns for:
 \item \code{vol_exch}: Volume exchange ratio
 \item \code{elo_x/elo_y/elo_z}: Elongation ratios (x/y/z axis)
 }
+If \code{x} contains a \code{group_id} column, morphology metrics are computed
+once per group and copied back to each original row in that group. The returned
+rows and geometries are not dissolved.
 
 \code{get_pop_density} returns an \code{sf} object identical to input \code{x},
-with an added column:
+with added columns:
 \itemize{
-\item \code{pop_den}: Estimated population density (people per 10000m²)
-at the centroid of each building polygon.
+\item \code{pop_total}: Estimated total population in the GHSL cell
+containing the building centroid, or within the centroid buffer if
+\code{distance} is provided.
+\item \code{pop_den}: Estimated population density (people per square
+meter) in the GHSL cell containing the building centroid, or within the
+centroid buffer if \code{distance} is provided.
 }
 
 \code{get_residential} returns an \code{sf} object identical to input \code{x},
@@ -152,6 +195,8 @@ with additional columns for:
 \item \code{n_count}: Number of adjacent buildings within the radius.
 \item \code{m_ndist}: Mean distance from the building centroid
 to neighboring building centroids.
+\item \code{min_ndist}: Minimum distance to neighboring building centroids.
+\item \code{max_ndist}: Maximum distance to neighboring building centroids.
 \item \code{sd_ndist}: Standard deviation of those distances.
 }
 
@@ -159,6 +204,10 @@ to neighboring building centroids.
 with additional columns for:
 \itemize{
 \item \code{mean_gvi}: Mean Building Green View Index value (0 to 1) from selected height(s).
+\item \code{bottom_gvi}: Building Green View Index from the bottom
+viewpoint, 1.7 m above ground.
+\item \code{top_gvi}: Building Green View Index from the top viewpoint.
+For short buildings, this is equal to \code{bottom_gvi}.
 \item \code{min_gvi}, \code{max_gvi}, \code{sd_gvi}: Minimum, maximum,
 and standard deviation of Green View Index (GVI) (if \code{floor = TRUE}).
 \item \code{estimated_floors}: Estimated number of floors based on building height
@@ -172,6 +221,9 @@ with an additional column:
 \description{
 \code{get_morphology}: Computes a set of morphological properties and geometric descriptors for each building footprint polygon.
 These include area, perimeter, surface area, volume, shape compactness, elongation, and accessibility measures.
+If \code{x} contains a \code{group_id} column, features with the same \code{group_id} are
+treated as one building for morphology metrics while the returned rows and
+geometries remain unchanged.
 
 \code{get_pop_density}: Downloads and extracts population density data from the GHSL
 (Global Human Settlement Layer) dataset for a specified year, and assigns
@@ -181,8 +233,8 @@ centroid location.
 \code{get_residential}: Estimate residential and non-residential building based on
 Global Human Settlement Layer (GHSL) built-up surface data
 
-\code{get_neighbors}: Computes the number of neighboring buildings and their average and standard
-deviation of centroid distances, based on a fixed-radius buffer and
+\code{get_neighbors}: Computes the number of neighboring buildings and centroid
+distance summaries, based on a fixed-radius buffer and
 Voronoi-based adjacency.
 
 \code{get_bgvi}: Calculate the Building Green View Index (BGVI) for each building volume
@@ -190,8 +242,28 @@ Voronoi-based adjacency.
 \code{get_dng}: Calculate the distance to the nearest greenspace (DNG) patch
 for each building volume
 }
+\details{
+When \code{floor = TRUE}, \code{get_bgvi()} estimates the number of floors from
+building height and computes GVI from selected floor viewpoints. The
+\code{floor_step} argument controls how densely floors are sampled. If
+\code{floor_step = 1}, GVI is computed for every estimated floor. If
+\code{floor_step > 1}, GVI is computed every \code{floor_step} floors to reduce
+runtime; for example, \code{floor_step = 3} samples floors 1, 4, 7, and so on.
+The top estimated floor is always included, even when it does not fall on
+the step sequence.
+
+If \code{directions} is provided, \code{get_bgvi()} also computes direction-specific
+GVI by applying the requested \code{field_of_view} around each direction within
+each computed viewshed. The viewshed itself is computed once per viewpoint,
+then reused for each direction. Direction-specific columns are named with the
+direction suffix, such as \code{gvi_bottom_south}, \code{gvi_top_south},
+\code{mean_gvi_south}, \code{min_gvi_south}, \code{max_gvi_south}, and
+\code{sd_gvi_south}.
+}
 \note{
 \code{x} must include a unique \code{id} field.
+If \code{x} includes \code{group_id}, metrics that represent a whole building are
+computed on temporary grouped features and copied back to the original rows.
 
 To request an OpenTopography API token, please visit:
 \url{https://portal.opentopography.org/requestService?service=api}
@@ -216,6 +288,8 @@ result <- gloBFPr::get_residential(globfp_example[c(1:3),])
 result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
 \donttest{
 result <- gloBFPr::get_bgvi(globfp_example[c(1:3),],
+                            datasource_canopy_height = "metachm",
+                            datasource_greenspace = "esri",
                             key = "YOUR_opentopography_API_KEY")
 }
 

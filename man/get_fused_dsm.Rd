@@ -4,10 +4,26 @@
 \alias{get_fused_dsm}
 \title{get_fused_dsm}
 \usage{
-get_fused_dsm(x = NULL, min_tree_height = 2, key = NULL)
+get_fused_dsm(
+  x = NULL,
+  datasource_canopy_height = "metachm",
+  min_tree_height = 2,
+  key = NULL,
+  quiet = TRUE
+)
 }
 \arguments{
 \item{x}{sf. building footprint polygon, typically output from \code{\link[=search_3dglobdf]{search_3dglobdf()}}}
+
+\item{datasource_canopy_height}{character or \code{NULL}. Canopy height source.
+Currently supports \code{"metachm"}, \code{"ethCHM"}, or \code{NULL}.}
+
+\item{min_tree_height}{numeric. Minimum canopy height threshold in meters.}
+
+\item{key}{character. OpenTopography API key used to download DEM data.}
+
+\item{quiet}{logical. If \code{TRUE}, suppress cli messages and progress output.
+Default is \code{TRUE}.}
 }
 \description{
 Generate digital surface model using multiple datasets, including building height map,

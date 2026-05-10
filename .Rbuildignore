@@ -8,3 +8,5 @@
 ^docs$
 ^.*\.gitignore$
 ^.*\.Rhistory$
+^\.positai$
+^\.claude$

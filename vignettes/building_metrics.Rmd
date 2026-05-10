@@ -1,39 +1,296 @@
 ---
-title: "gloBFPr_data_analysis"
+title: "Building Metrics with gloBFPr"
 output: html_document
 ---
 
 # Analyze Building Footprints
 
-Load example data in the package
+This vignette shows how to compute building-level metrics from a building
+footprint layer with height attributes. Most functions return the same `sf`
+object with additional metric columns, so the usual workflow is to pipe or
+reassign the result step by step.
 
-```{r eval=FALSE}
+```{r setup, message=FALSE}
+library(gloBFPr)
+library(sf)
+library(dplyr)
+```
+
+## Example data
+
+The package includes a small `sf` example dataset with building footprints,
+unique IDs, and building heights.
+
+```{r}
 data(globfp_example)
+
+buildings <- globfp_example
+buildings <- buildings[seq_len(min(10, nrow(buildings))), ]
+
+names(buildings)
 ```
 
-## Morphologic properties and indices
+For your own area of interest, first retrieve building footprints with
+`search_3dglobdf()`, then pass the returned polygon layer to the metric
+functions.
 
 ```{r eval=FALSE}
-result <- gloBFPr::get_morphology(globfp_example)
+buildings <- search_3dglobdf(
+  bbox = c(-83.065644, 42.333792, -83.045217, 42.346988),
+  out_type = "poly",
+  quiet = TRUE
+)
 ```
 
-## Population density
+## Morphological Metrics
+
+`get_morphology()` computes geometric and shape metrics such as footprint area,
+perimeter, volume, compactness, convexity, elongation, and pairwise distance.
 
 ```{r eval=FALSE}
-result <- gloBFPr::get_pop_density(result)
+morphology <- get_morphology(buildings, quiet = TRUE)
+
+morphology |>
+  st_drop_geometry() |>
+  select(id, Height, g_area, pmeter, vol, rec, cnv, elo_z) |>
+  head()
 ```
 
-## Neighboring buildings
+You can also request only a subset of metrics when you do not need the full
+set.
 
 ```{r eval=FALSE}
-result <- gloBFPr::get_neighbors(result, radius = 500)
+basic_shape <- get_morphology(
+  buildings,
+  metrics = c("g_area", "pmeter", "vol", "rec"),
+  quiet = TRUE
+)
 ```
 
-## Greenery aaccessibility
+## Neighbor Metrics
+
+`get_neighbors()` estimates the number of neighboring buildings and centroid
+distance summaries using a fixed search radius and Voronoi adjacency.
 
 ```{r eval=FALSE}
-# result <- gloBFPr::get_green_acc(result, 
-#                                  min_tree_height = 2, 
-#                                  radius = 800,
-#                                  key = '')
+neighbors <- get_neighbors(
+  morphology,
+  radius = 500,
+  quiet = TRUE
+)
+
+neighbors |>
+  st_drop_geometry() |>
+  select(id, n_count, m_ndist, min_ndist, max_ndist, sd_ndist) |>
+  head()
+```
+
+Use a smaller radius for dense local context or a larger radius for broader
+neighborhood context.
+
+```{r eval=FALSE}
+neighbors_100m <- get_neighbors(buildings, radius = 100, quiet = TRUE)
+```
+
+## Population Density
+
+`get_pop_density()` downloads GHSL population tiles and extracts total
+population and population density at each building centroid. Set `distance` to
+aggregate population within a buffer around each building centroid. This step
+requires network access and can take time depending on the number of GHSL tiles
+intersecting the study area.
+
+```{r eval=FALSE}
+population <- get_pop_density(
+  neighbors,
+  year = 2025,
+  quiet = TRUE
+)
+
+population_500m <- get_pop_density(
+  neighbors,
+  year = 2025,
+  distance = 500,
+  quiet = TRUE
+)
+
+population |>
+  st_drop_geometry() |>
+  select(id, pop_total, pop_den) |>
+  head()
+```
+
+## Residential Classification
+
+`get_residential()` uses GHSL built-up surface data to estimate whether each
+building is residential. The `threshold` is the minimum residential built-up
+surface percentage in the matched GHSL cell.
+
+```{r eval=FALSE}
+residential <- get_residential(
+  population,
+  year = 2025,
+  threshold = 80,
+  quiet = TRUE
+)
+
+residential |>
+  st_drop_geometry() |>
+  select(id, res, res_pct, total_built_vals, res_vals, nres_vals) |>
+  head()
+```
+
+## Distance to Nearest Greenspace
+
+`get_dng()` computes the distance from each building centroid to the nearest
+qualifying green patch within a buffer. The source can be `metachm`, `esri`, or
+`sentinel2`.
+
+```{r eval=FALSE}
+dng <- get_dng(
+  residential,
+  datasource = "metachm",
+  radius = 800,
+  min_tree_height = 2,
+  min_area = 500,
+  unit = "m2",
+  quiet = TRUE
+)
+
+dng |>
+  st_drop_geometry() |>
+  select(id, dng) |>
+  head()
+```
+
+For a 2D greenery mask source, use `esri` or `sentinel2`.
+
+```{r eval=FALSE}
+dng_esri <- get_dng(
+  buildings,
+  datasource = "esri",
+  zoom = 17,
+  radius = 800,
+  min_area = 500,
+  unit = "m2",
+  quiet = TRUE
+)
+```
+
+## Building Green View Index
+
+`get_bgvi()` estimates Building Green View Index from building viewpoints. The
+DSM can include metaCHM canopy height, while the visible-green feature layer can
+come from height-filtered canopy, 2D map-tile greenspace, or the union of both.
+An OpenTopography API key is required for the DEM. This can be computationally
+heavy; start with a small subset of buildings.
+
+```{r eval=FALSE}
+bgvi <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  min_tree_height = 2,
+  radius = 800,
+  floor = FALSE,
+  workers = 1,
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  quiet = TRUE
+)
+
+bgvi |>
+  st_drop_geometry() |>
+  select(id, mean_gvi, bottom_gvi, top_gvi) |>
+  head()
+```
+
+To compute BGVI with a DSM built only from buildings and DEM, set
+`datasource_canopy_height = NULL` and provide a 2D greenspace source.
+
+```{r eval=FALSE}
+bgvi_2d_green <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = NULL,
+  datasource_greenspace = "esri",
+  radius = 800,
+  short_building_threshold = 6,
+  workers = 1,
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  quiet = TRUE
+)
+```
+
+To compute directional BGVI, provide one or more directions and a field of view
+in degrees. The function reuses each computed viewshed and filters visible
+greenery by direction.
+
+```{r eval=FALSE}
+bgvi_directional <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  radius = 800,
+  directions = c("southwest", "south", "southeast"),
+  field_of_view = 45,
+  workers = 1,
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  quiet = TRUE
+)
+
+bgvi_directional |>
+  st_drop_geometry() |>
+  select(id, mean_gvi_south, gvi_bottom_south, gvi_top_south) |>
+  head()
+```
+
+To compute GVI by floor, set `floor = TRUE`. Use `floor_step` to sample every
+`n` floors and reduce runtime. The top estimated floor is always included.
+
+```{r eval=FALSE}
+bgvi_by_floor <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = "metachm",
+  radius = 800,
+  floor = TRUE,
+  floor_step = 3,
+  workers = 2,
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  quiet = TRUE
+)
+
+bgvi_by_floor |>
+  st_drop_geometry() |>
+  select(id, estimated_floors, mean_gvi, bottom_gvi, top_gvi, min_gvi, max_gvi, sd_gvi) |>
+  head()
+```
+
+## A Complete Metric Pipeline
+
+For a typical analysis, build the result incrementally. Keep `quiet = TRUE` for
+batch workflows, or set it to `FALSE` when you want messages and progress bars.
+
+```{r eval=FALSE}
+result <- buildings |>
+  get_morphology(quiet = TRUE) |>
+  get_neighbors(radius = 500, quiet = TRUE) |>
+  get_pop_density(year = 2025, quiet = TRUE) |>
+  get_residential(year = 2025, threshold = 80, quiet = TRUE) |>
+  get_dng(
+    datasource = "metachm",
+    radius = 800,
+    min_area = 500,
+    unit = "m2",
+    quiet = TRUE
+  )
+
+metric_table <- result |>
+  st_drop_geometry() |>
+  select(
+    id, Height, g_area, vol, rec,
+    n_count, m_ndist, min_ndist, max_ndist, sd_ndist,
+    pop_total, pop_den, res, res_pct,
+    dng
+  )
+
+head(metric_table)
 ```

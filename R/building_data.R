@@ -1,18 +1,21 @@
 #' search_3dglobdf
 #' @description
-#' Search and retrieve 3D-GloBFP tiles that intersect a given bounding box or
-#' area of interest (a city), with options to return vector or raster outputs including
-#' building polygons, binary presence rasters, and height-coded rasters.
+#' Search and retrieve 3D building footprint data from 3D-GloBFP or
+#' GlobalBuildingAtlas that intersect a given bounding box or area of interest
+#' (a city), with options to return vector or raster outputs including building
+#' polygons, binary presence rasters, and height-coded rasters.
 #'
 #' @param bbox `sf`, `sfc`, or a numeric vector (xmin, ymin, xmax, ymax)
 #' defining the area of interest. This can be ignored if `place` is specified.
 #' @param place vector (optional). A single line address,
 #' e.g. ("1600 Pennsylvania Ave NW, Washington") or a vector of addresses
 #' (c("Madrid", "Barcelona")).
-#' @param metadata sf. Typically output from [get_metadata()], containing tile
-#' extents and download URLs.
 #' @param crop logical. If `TRUE`, the resulting building footprint geometries
 #' will be cropped to the input `bbox`. Default is `FALSE`.
+#' @param data_source character. Building data source to query. Use `"GBF"` for
+#' 3D-GloBFP (default) or `"GBA"`/`"gba"` for GlobalBuildingAtlas.
+#' @param keep_source_id logical. If `TRUE`, keep the original source feature
+#' identifier as `source_id` when it is available. Default is `FALSE`.
 #' @param out_type character. Default is `'poly'`.
 #' Output type(s) to return. Options include:
 #'   \itemize{
@@ -27,12 +30,15 @@
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
 #' @param cell_size numeric (optional). Default is 1. Only used when `out_type`
 #' is `"graduated_rast"`, `"rast"`, or `"all"`.
-#' @param quiet logical. If `TRUE`, console message will be returned.
+#' @param quiet logical. If `TRUE`, suppress cli messages and progress output.
 #' Default is `TRUE`.
 #'
 #' @return Varies based on `out_type`:
 #' \itemize{
-#'   \item If `"poly"`: an `sf` object of building footprints.
+#'   \item If `"poly"`: an `sf` object of building footprints. `MULTIPOLYGON`
+#'   geometries are converted to `POLYGON` geometries while preserving one row
+#'   per source feature. Polygons that touch or intersect share a `group_id`,
+#'   which can be used to treat fragmented rows as one building group.
 #'   \item If `"binary_rast"`: a binary `SpatRaster` (`terra`) indicating building presence.
 #'   \item If `"graduated_rast"`: a quantitative `SpatRaster` of building heights.
 #'   \item If `"rast"`: a named list with two `SpatRaster` objects: `binary` and `graduated`.
@@ -52,6 +58,10 @@
 #' Dai Yongjiu (2024). 3D-GloBFP: the first global three-dimensional building
 #' footprint dataset. Earth Syst. Sci. Data, 16, 5357-5374
 #'
+#' Zhu X. X., Chen S., Zhang F., Shi Y., & Wang Y. (2025).
+#' GlobalBuildingAtlas: an open global and complete dataset of building
+#' polygons, heights and LoD1 3D models. Earth Syst. Sci. Data, 17, 6647-6668.
+#'
 #' @examples
 #' buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639))
 #'
@@ -61,6 +71,7 @@
 #' @importFrom sf st_intersects
 #' @importFrom utils download.file
 #' @importFrom utils unzip
+#' @importFrom utils URLencode
 #' @importFrom dplyr bind_rows
 #' @importFrom cli cli_alert_info
 #' @importFrom cli cli_alert_success
@@ -71,6 +82,8 @@
 search_3dglobdf <- function(bbox=NULL,
                             place=NULL,
                             crop=FALSE,
+                            data_source="GBF",
+                            keep_source_id=FALSE,
                             out_type='poly',
                             mask=FALSE,
                             cell_size=1,
@@ -105,62 +118,17 @@ search_3dglobdf <- function(bbox=NULL,
   # Ensure input is in WGS84
   bbox <- sf::st_transform(bbox, 4326)
 
-  # find all areas of spatial grid that intersect with bbox
-  intersecting <- globfp3d_metadata[sf::st_intersects(globfp3d_metadata, bbox, sparse = FALSE), ]
+  data_source <- normalize_building_data_source(data_source)
+  if (data_source == "GBF") {
+    all_data <- read_gbf_buildings(bbox, quiet = quiet)
+  } else {
+    all_data <- read_gba_buildings(bbox, quiet = quiet)
+  }
 
-  if (nrow(intersecting) == 0) {
-    base::warning("No tiles intersect with the provided bbox.")
+  if (is.null(all_data) || nrow(all_data) == 0) {
+    base::warning("No buildings were found for the provided bbox.")
     return(NULL)
   }
-
-  # download and load shapefiles
-  result_list <- list()
-  d_mode <- 'auto'
-  # check os
-  os <- Sys.info()[["sysname"]]
-  if (os == "Windows") {
-    d_mode <- 'wininet'
-  }
-
-  # Store the original 'timeout' option and ensure it's reset upon function exit
-  original_timeout <- getOption('timeout')
-  on.exit(options(timeout = original_timeout), add = TRUE)
-  options(timeout=9999)
-  for (i in seq_len(nrow(intersecting))) {
-    temp_zip <- tempfile(fileext = ".zip")
-    utils::download.file(intersecting$download_url[i],
-                         destfile = temp_zip,
-                         method = d_mode,
-                         quiet = TRUE)
-
-    unzip_dir <- tempfile()
-    utils::unzip(temp_zip, exdir = unzip_dir)
-
-    # Find .shp file
-    shp_files <- list.files(unzip_dir, pattern = "\\.shp$", full.names = TRUE)
-    if (length(shp_files) == 0) next
-
-    sf_data <- tryCatch({
-      sf::st_read(shp_files[1], quiet = TRUE)
-    }, error = function(e) {
-      base::message("Failed to read shapefile: ", shp_files[1])
-      return(NULL)
-    })
-
-    if (!is.null(sf_data)) {
-      result_list[[length(result_list) + 1]] <- sf_data
-    }
-    unlink(c(temp_zip, unzip_dir), recursive = TRUE)
-  }
-
-  result_list <- lapply(result_list, function(x) {
-    #x <- sf::st_cast(x, "POLYGON")  # ensure same geometry type
-    x <- x[, intersect(names(x), names(result_list[[1]]))]  # keep common columns only
-    return(x)
-  })
-  # Combine all into one sf object
-  all_data <- dplyr::bind_rows(result_list)
-  all_data <- all_data[,c('Height','geometry')]
 
   utm_crs <- get_utm_crs(bbox)
   bbox_proj <- sf::st_transform(bbox, crs = utm_crs)
@@ -172,6 +140,13 @@ search_3dglobdf <- function(bbox=NULL,
     #all_data <- suppressWarnings(all_data[sf::st_intersects(all_data, bbox, sparse = FALSE), ])
     all_data <- suppressWarnings(sf::st_crop(all_data, bbox_proj))
   }
+  all_data <- normalize_building_geometries(all_data)
+  if (is.null(all_data) || nrow(all_data) == 0) {
+    base::warning("No buildings were found for the provided bbox.")
+    return(NULL)
+  }
+  all_data <- drop_internal_building_columns(all_data, keep_source_id = keep_source_id)
+  all_data <- assign_building_group_id(all_data)
 
   # assign an id to each building
   all_data$id <- seq_len(nrow(all_data))
@@ -180,7 +155,7 @@ search_3dglobdf <- function(bbox=NULL,
   if(out_type == 'poly') {
     end_time <- Sys.time()
     process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-    if (quiet) time_taken(process_time)
+    if (!quiet) time_taken(process_time)
     return(all_data)
   }
 
@@ -199,25 +174,25 @@ search_3dglobdf <- function(bbox=NULL,
     if (out_type == "binary_rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      if (quiet) time_taken(process_time)
+      if (!quiet) time_taken(process_time)
       return(binary)
     }
     if (out_type == "graduated_rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      if (quiet) time_taken(process_time)
+      if (!quiet) time_taken(process_time)
       return(graduated)
     }
     if (out_type == "rast") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      if (quiet) time_taken(process_time)
+      if (!quiet) time_taken(process_time)
       return(list(binary = binary, graduated = graduated))
     }
     if (out_type == "all") {
       end_time <- Sys.time()
       process_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
-      if (quiet) time_taken(process_time)
+      if (!quiet) time_taken(process_time)
       return(list(poly = all_data, binary = binary, graduated = graduated))
     }
   }
@@ -230,6 +205,12 @@ search_3dglobdf <- function(bbox=NULL,
 #' Generate digital surface model using multiple datasets, including building height map,
 #' canopy height map, and terrain model.
 #' @param x sf. building footprint polygon, typically output from [search_3dglobdf()]
+#' @param datasource_canopy_height character or `NULL`. Canopy height source.
+#' Currently supports `"metachm"`, `"ethCHM"`, or `NULL`.
+#' @param min_tree_height numeric. Minimum canopy height threshold in meters.
+#' @param key character. OpenTopography API key used to download DEM data.
+#' @param quiet logical. If `TRUE`, suppress cli messages and progress output.
+#' Default is `TRUE`.
 #' @examples
 #' \donttest{
 #'  example <- gloBFPr::globfp_example
@@ -238,19 +219,67 @@ search_3dglobdf <- function(bbox=NULL,
 #'
 #' @export
 get_fused_dsm <- function(x = NULL,
+                          datasource_canopy_height = "metachm",
                           min_tree_height = 2,
-                          key = NULL) {
+                          key = NULL,
+                          quiet = TRUE) {
+  if (inherits(x, 'NULL')) {
+    if (!quiet) cli::cli_alert_info("Please input building footprint polygon generated by `search_3dglobdf()`.")
+    return(x)
+  }
+  if (inherits(key, 'NULL')) {
+    stop("API key for OpenTopography is missing.")
+  }
+
+  normalize_source <- function(value, choices) {
+    if (inherits(value, "NULL")) return(NULL)
+    value <- tolower(as.character(value[1]))
+    if (value %in% c("none", "null", "na")) return(NULL)
+    match.arg(value, choices)
+  }
+  datasource_canopy_height <- normalize_source(datasource_canopy_height, c("metachm", "ethchm"))
+
+  old_terra_progress <- terra::terraOptions(print = FALSE)$progress
+  terra::terraOptions(progress = 0)
+  on.exit(terra::terraOptions(progress = old_terra_progress), add = TRUE)
+
   projected_poly <- x
   bbox <- get_bbox(x)
   bbox_vector <- bbox_poly_to_list(bbox)
 
-  chm_layers <- suppressMessages(get_chm(bbox_vector, min_tree_height))
+  if (!quiet) cli::cli_alert_info('Start downloading DSM raster inputs ...')
   dem <- get_dem(bbox_vector, key)
+  chm_layers <- NULL
+  if (!inherits(datasource_canopy_height, "NULL")) {
+    chm_layers <- suppressMessages(get_chm(
+      bbox_vector,
+      min_tree_height,
+      datasource = datasource_canopy_height
+    ))
+  }
 
-  chm_n_dem <- unify_layers(bbox, chm_layers[[1]], dem)
-  chm <- chm_n_dem[[1]]
-  dem <- chm_n_dem[[2]]
-  dsm <- chm + dem
+  if (!inherits(chm_layers, "NULL")) {
+    raster_res <- terra::res(chm_layers[[1]])[1]
+  } else {
+    dem_projected <- terra::project(dem, paste0("EPSG:", get_utm_crs(bbox)), method = "near")
+    raster_res <- terra::res(dem_projected)[1]
+  }
+  bh_all <- rasterize_height(projected_poly, bbox, raster_res)
+  layers_to_align <- list(dem = dem, bh_all = bh_all)
+  if (!inherits(chm_layers, "NULL")) {
+    layers_to_align$chm <- chm_layers[[1]]
+  }
+  aligned_layers <- do.call(unify_layers, c(list(bbox), layers_to_align))
+
+  dem <- aligned_layers$dem
+  bh_all <- terra::ifel(is.na(aligned_layers$bh_all), 0, aligned_layers$bh_all)
+  chm <- if (!is.null(aligned_layers$chm)) {
+    terra::ifel(is.na(aligned_layers$chm), 0, aligned_layers$chm)
+  } else {
+    terra::ifel(is.na(dem), NA, 0)
+  }
+  surface <- terra::ifel(chm > bh_all, chm, bh_all)
+  dsm <- dem + surface
 
   return(dsm)
 }

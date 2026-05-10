@@ -1,0 +1,437 @@
+---
+title: "Building Shadows and Radiation with gloBFPr"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{Building Shadows and Radiation with gloBFPr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Analyze Building Shadows and Radiation
+
+This vignette demonstrates how to compute building shadow footprints, shadow
+height, and surface radiation with `sf` and `terra` objects. The examples use a
+small synthetic building layer (sampled in Detroit) so the vignette can run without downloading
+external data.
+
+## Workflow Summary
+
+1. Prepare an `sf` building polygon layer with a numeric `Height` column.
+2. Define `solar_time` and `time_zone` so the functions estimate solar
+   position from the building-layer centroid.
+3. Use `get_shadow_footprint()` for shadow polygons.
+4. Use `get_shadow_height()` with `sf` points or a `terra::SpatRaster`.
+5. Use `get_radiation()` to sample roof and facade radiation and visualize the
+   returned `sf` layer.
+   
+
+```{r setup, message=FALSE}
+library(gloBFPr)
+library(sf)
+library(terra)
+```
+
+## Example Buildings
+
+The shadow and radiation functions expect an `sf` polygon layer with a numeric
+height column. Building data returned by `search_3dglobdf()` already uses the
+`Height` field, so the same default works here.
+
+The package includes a small `sf` example dataset with building footprints,
+unique IDs, and building heights.
+
+```{r}
+data(globfp_example)
+data(globfp_example_dem)
+data(globfp_example_canopy_height)
+
+buildings <- globfp_example
+# buildings <- buildings[seq_len(min(10, nrow(buildings))), ]
+dem <- rast(globfp_example_dem)
+canopy_height <- rast(globfp_example_canopy_height)
+
+names(buildings)
+```
+
+For your own area of interest, first retrieve building footprints with
+`search_3dglobdf()`, then pass the returned polygon layer to the metric
+functions.
+
+## Solar Position
+
+Start with `solar_time` and `time_zone`. The functions estimate sun azimuth and
+elevation from the time and the centroid of the building layer.
+
+If you already have solar geometry from another source, you can use manual
+`azimuth` and `elevation` values instead. Azimuth is measured clockwise from
+north, and elevation is measured above the horizon.
+
+```{r}
+solar_time <- "2026-06-21 15:00:00"
+time_zone <- "America/Detroit"
+
+azimuth <- 135
+elevation <- 35
+```
+
+## Shadow Footprints
+
+`get_shadow_footprint()` returns an `sf` polygon layer containing one shadow
+footprint for each building.
+
+```{r}
+shadow_footprints <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  plot = TRUE,
+  quiet = TRUE
+)
+```
+
+To compare shadows from multiple times, pass a vector of `solar_time` values.
+When `plot_overlap_gradient = TRUE`, the plot uses transparent gray shadows so
+overlapping shadow areas appear darker.
+
+```{r}
+solar_times <- data.frame(
+  sun_id = c("morning", "midday", "afternoon"),
+  solar_time = c(
+    "2026-06-21 09:00:00",
+    "2026-06-21 12:00:00",
+    "2026-06-21 16:00:00"
+  )
+)
+
+multi_shadow_footprints <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_times$solar_time,
+  time_zone = time_zone,
+  plot = TRUE,
+  plot_overlap_gradient = TRUE,
+  quiet = TRUE
+)
+
+unique(multi_shadow_footprints$sun_id)
+```
+
+Set `overlap_shadow = TRUE` when you want a dissolved cumulative shadow footprint. This
+is useful for seeing the total ground area affected by all supplied solar
+positions.
+
+```{r}
+combined_shadow_footprints <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_times$solar_time,
+  time_zone = time_zone,
+  overlap_shadow = TRUE,
+  plot = TRUE,
+  quiet = TRUE
+)
+```
+
+## Shadow Height at Points
+
+Use an `sf` point layer when you need shadow height at specific locations.
+
+```{r}
+sample_points <- st_make_grid(
+  st_as_sfc(st_bbox(shadow_footprints)),
+  cellsize = 8,
+  what = "centers"
+)
+
+sample_points <- st_sf(
+  id = seq_along(sample_points),
+  geometry = sample_points
+)
+
+shadow_height_points <- get_shadow_height(
+  buildings,
+  shadow_locations = sample_points,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  quiet = TRUE
+)
+
+sample_points$shadow_height <- shadow_height_points[, 1]
+
+plot(st_geometry(shadow_footprints), col = "#E5E7EB", border = NA)
+plot(st_geometry(buildings), col = "white", border = "#111827", add = TRUE)
+plot(
+  sample_points["shadow_height"],
+  pch = 16,
+  key.pos = 4,
+  add = TRUE
+)
+```
+
+## Shadow Height as a Terra Surface
+
+Pass a `terra::SpatRaster` template to compute a gridded shadow-height surface.
+If `shadow_locations = NULL`, `get_shadow_height()` creates a template automatically.
+
+```{r}
+template <- rast(
+  xmin = st_bbox(shadow_footprints)[["xmin"]],
+  xmax = st_bbox(shadow_footprints)[["xmax"]],
+  ymin = st_bbox(shadow_footprints)[["ymin"]],
+  ymax = st_bbox(shadow_footprints)[["ymax"]],
+  resolution = 4,
+  crs = st_crs(buildings)$wkt
+)
+
+shadow_height_surface <- get_shadow_height(
+  buildings,
+  shadow_locations = template,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  quiet = TRUE
+)
+
+plot(shadow_height_surface, main = "Shadow height")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+```
+
+## Tree Canopy and Terrain
+
+Tree canopy can be included as an additional shadow obstacle by passing a
+canopy height map. If you also provide a DEM, the function compares canopy and
+building shadows in absolute elevation and returns shadow heights above local
+ground.
+
+If you do not already have these rasters, the shadow and radiation functions can
+retrieve them internally. Canopy height currently supports `datasource_canopy_height =
+"metachm"` or `"ethCHM"`, and DEM retrieval requires an OpenTopography API key.
+
+```{r eval=FALSE}
+shadow_height_with_downloaded_trees <- get_shadow_height(
+  buildings,
+  shadow_locations = template,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  datasource_canopy_height = "metachm",
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  min_tree_height = 2,
+  quiet = TRUE
+)
+
+radiation_with_downloaded_trees <- get_radiation(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  solar_normal = 850,
+  solar_diffuse = 120,
+  datasource_canopy_height = "metachm",
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  min_tree_height = 2,
+  canopy_transmissivity = 0.15,
+  quiet = TRUE
+)
+```
+
+```{r}
+plot(dem, main = "Sample DEM")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+plot(canopy_height, main = "Canopy height")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+```
+
+The same `get_shadow_height()` call can now include tree canopy.
+
+```{r}
+shadow_footprints_with_trees <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  canopy_height = canopy_height,
+  dem = dem,
+  min_tree_height = 1.5,
+  quiet = TRUE,
+  plot = TRUE
+)
+```
+
+```{r}
+shadow_height_with_trees <- get_shadow_height(
+  buildings,
+  shadow_locations = template,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  canopy_height = canopy_height,
+  dem = dem,
+  min_tree_height = 2,
+  quiet = TRUE
+)
+
+plot(shadow_height_with_trees, main = "Building and canopy shadow height")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+```
+
+## Building Surface Radiation
+
+`get_radiation()` estimates radiation on a 3D `sf` surface grid. If no grid is
+provided, the function samples roofs and facades from the building polygons.
+`solar_normal` is direct normal irradiance and `solar_diffuse` is diffuse
+horizontal irradiance.
+
+```{r}
+radiation <- get_radiation(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  solar_normal = 850,
+  solar_diffuse = 120,
+  grid_res = 8,
+  plot = TRUE,
+  quiet = TRUE
+)
+
+head(st_drop_geometry(radiation))
+```
+
+To include tree shade in the radiation estimate, pass the canopy height map and
+DEM. `canopy_transmissivity` controls how much direct radiation passes through
+tree shade; `0` is fully opaque and `1` has no effect.
+
+```{r}
+radiation_with_trees <- get_radiation(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  solar_normal = 850,
+  solar_diffuse = 120,
+  canopy_height = canopy_height,
+  dem = dem,
+  min_tree_height = 2,
+  canopy_transmissivity = 0.15,
+  grid_res = 8,
+  plot = TRUE,
+  quiet = TRUE
+)
+
+roof_building_only <- aggregate(
+  total ~ building_id,
+  data = st_drop_geometry(radiation[radiation$surface == "roof", ]),
+  FUN = mean
+)
+roof_with_trees <- aggregate(
+  total ~ building_id,
+  data = st_drop_geometry(radiation_with_trees[radiation_with_trees$surface == "roof", ]),
+  FUN = mean
+)
+
+roof_compare <- merge(
+  roof_building_only,
+  roof_with_trees,
+  by = "building_id",
+  suffixes = c("_building_only", "_with_trees")
+)
+
+head(roof_compare)
+```
+
+The returned object contains both roof and facade sample points. Plotting all
+of them with the default `sf` color scale can be hard to read because the dense
+facade points trace the building walls. A clearer first view is to show roof
+radiation as colored points and draw facade points separately in a muted color.
+
+```{r}
+roof_radiation <- radiation[radiation$surface == "roof", ]
+facade_radiation <- radiation[radiation$surface == "facade", ]
+
+roof_cols <- hcl.colors(100, "YlOrRd", rev = TRUE)
+roof_breaks <- cut(
+  roof_radiation$total,
+  breaks = 100,
+  include.lowest = TRUE,
+  labels = FALSE
+)
+
+plot(st_geometry(buildings), col = "grey95", border = "grey45")
+plot(
+  st_geometry(facade_radiation),
+  pch = 16,
+  cex = 0.25,
+  col = "#2563EB55",
+  add = TRUE
+)
+plot(
+  st_geometry(roof_radiation),
+  pch = 16,
+  cex = 0.75,
+  col = roof_cols[roof_breaks],
+  add = TRUE
+)
+legend(
+  "topright",
+  legend = c("lower roof total", "higher roof total", "facade samples"),
+  pch = 16,
+  col = c(roof_cols[1], roof_cols[100], "#2563EB55"),
+  bty = "n"
+)
+```
+
+You can also inspect roofs and facades as separate maps.
+
+```{r}
+plot(roof_radiation["total"], pch = 16, cex = 0.8, key.pos = 4)
+plot(st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+
+plot(facade_radiation["total"], pch = 16, cex = 0.45, key.pos = 4)
+plot(st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+```
+
+For multiple times, provide one irradiance value for each `solar_time`.
+
+```{r}
+solar_day <- c(
+  "2026-06-21 08:00:00",
+  "2026-06-21 11:00:00",
+  "2026-06-21 14:00:00",
+  "2026-06-21 17:00:00"
+)
+
+radiation_day <- get_radiation(
+  buildings,
+  solar_time = solar_day,
+  time_zone = time_zone,
+  solar_normal = c(500, 850, 900, 650),
+  solar_diffuse = c(180, 120, 110, 150),
+  grid_res = 8,
+  quiet = TRUE
+)
+
+roof_day <- radiation_day[radiation_day$surface == "roof", ]
+facade_day <- radiation_day[radiation_day$surface == "facade", ]
+
+roof_day_breaks <- cut(
+  roof_day$total,
+  breaks = 100,
+  include.lowest = TRUE,
+  labels = FALSE
+)
+
+plot(st_geometry(buildings), col = "grey95", border = "grey45")
+plot(
+  st_geometry(facade_day),
+  pch = 16,
+  cex = 0.25,
+  col = "#2563EB55",
+  add = TRUE
+)
+plot(
+  st_geometry(roof_day),
+  pch = 16,
+  cex = 0.75,
+  col = roof_cols[roof_day_breaks],
+  add = TRUE
+)
+legend(
+  "topright",
+  legend = c("lower roof total", "higher roof total", "facade samples"),
+  pch = 16,
+  col = c(roof_cols[1], roof_cols[100], "#2563EB55"),
+  bty = "n"
+)
+```

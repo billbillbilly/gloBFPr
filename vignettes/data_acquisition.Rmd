@@ -7,7 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-## Step 1 Retrieve Building Footprints with Heights Using a Bounding Box
+## 1 Retrieve Building Footprints with Heights Using a Bounding Box
 
 Set `out_type = "all"` o return a comprehensive list of outputs, including:
 - `poly`: an `sf` object of building footprints,
@@ -17,18 +17,25 @@ Set `out_type = "all"` o return a comprehensive list of outputs, including:
 Specify `cell_size = 1` to generate raster layers with 1-meter resolution, ensuring detailed spatial representation of building geometries within the defined area of interest.
 
 ```{r eval=FALSE}
-buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
-                                           metadata = metadata, out_type = "all", cell_size = 1)
+buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
+                                           out_type = "all", 
+                                           cell_size = 1)
 ```
-
-## Step 2 Retrieve Building Footprints with Heights Using a Bounding Box
 
 Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
 
 ```{r eval=FALSE}
-buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988), 
-                                           metadata = metadata, out_type = "all", 
-                                           mask = TRUE, cell_size = 1)
+buildings_rast <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
+                                           out_type = "graduated_rast", 
+                                           mask = TRUE, 
+                                           cell_size = 1)
 ```
 
+Setting `data_source = "GBA"` to get building data from GlobalBuildingAtlas.
 
+```{r eval=FALSE}
+buildings_gba <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
+                                           out_type = "poly", 
+                                           data_source = "GBA",
+                                          keep_source_id=T)
+```
