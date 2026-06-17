@@ -913,10 +913,10 @@ get_dem <- function(bbox, key) {
   bbox_poly <- sf::st_transform(
     sf::st_as_sfc(
       sf::st_bbox(
-        c(xmin = bbox[1],
-          ymin = bbox[2],
-          xmax = bbox[3],
-          ymax = bbox[4]),
+        c(xmin = unname(bbox[1]),
+          ymin = unname(bbox[2]),
+          xmax = unname(bbox[3]),
+          ymax = unname(bbox[4])),
         crs = 4326
       )
     ), sf::st_crs(us_poly)
@@ -967,10 +967,10 @@ get_chm <- function(bbox, min_height, datasource = "metachm") {
   # reporject chm
   bbox <- sf::st_as_sfc(
     sf::st_bbox(
-      c(xmin = bbox[1],
-        ymin = bbox[2],
-        xmax = bbox[3],
-        ymax = bbox[4]),
+      c(xmin = unname(bbox[1]),
+        ymin = unname(bbox[2]),
+        xmax = unname(bbox[3]),
+        ymax = unname(bbox[4])),
       crs = 4326
     )
   )
@@ -991,22 +991,23 @@ get_greenspace <- function(bbox = NULL, buffer = NULL,
   }
   type <- match.arg(type, c("metachm", "esri", "sentinel2"))
   bbox_vector <- if (is.numeric(bbox) && length(bbox) == 4) {
-    bbox
+    as_wgs84_bbox_vector(bbox)
   } else {
-    bbox_poly_to_list(bbox)
+    as_wgs84_bbox_vector(bbox)
   }
+  bbox_query <- unname(bbox_vector)
 
   if (type == "metachm") {
     g <- get_chm(bbox_vector, min_tree_height)[[2]]
   } else if (type == "esri") {
-    g <- greenSD::get_tile_green(bbox = bbox_vector, zoom = zoom,
-                                 provider = "esri")
-    utm_crs <- get_utm_crs(bbox)
+    g <- fetch_greenspace_tile(bbox = bbox_query, zoom = zoom,
+                               provider = "esri")
+ 	utm_crs <- get_utm_crs(bbox)
     g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
   } else if (type == "sentinel2") {
-    g <- greenSD::get_tile_green(bbox = bbox_vector, zoom = zoom,
-                                 provider = "eox", year = year)
-    utm_crs <- get_utm_crs(bbox)
+    g <- fetch_greenspace_tile(bbox = bbox_query, zoom = zoom,
+                               provider = "eox", year = year)
+ 	utm_crs <- get_utm_crs(bbox)
     g <- terra::project(g$green, paste0('EPSG:', utm_crs), method = 'near')
   }
   if (is.null(buffer)) {
@@ -1078,10 +1079,10 @@ get_utm_crs <- function(bbox) {
   if (is.numeric(bbox) && length(bbox) == 4) {
     bbox <- sf::st_as_sfc(
       sf::st_bbox(
-        c(xmin = bbox[1],
-          ymin = bbox[2],
-          xmax = bbox[3],
-          ymax = bbox[4]),
+        c(xmin = unname(bbox[1]),
+          ymin = unname(bbox[2]),
+          xmax = unname(bbox[3]),
+          ymax = unname(bbox[4])),
         crs = 4326
       )
     )
@@ -2408,3 +2409,246 @@ sun_vector <- function(solar_pos) {
 
 deg2rad <- function(x) x * pi / 180
 rad2deg <- function(x) x * 180 / pi
+
+#### Noise mapping ####
+#' @noRd
+prepare_noise_buildings <- function(buildings,
+                                    height_col,
+                                    population = FALSE,
+                                    population_field = NULL,
+                                    population_year = 2025,
+                                    quiet = TRUE) {
+  out <- buildings
+  if (isTRUE(population) && is.null(population_field) && !"POP" %in% names(out) && !"pop_total" %in% names(out)) {
+    population_fun <- get0("get_pop", mode = "function", inherits = TRUE)
+    if (is.null(population_fun)) {
+      population_fun <- get0("get_pop_density", mode = "function", inherits = TRUE)
+    }
+    if (is.null(population_fun)) {
+      stop("No building population function is available.", call. = FALSE)
+    }
+    out <- population_fun(out, year = population_year, quiet = quiet)
+  }
+  out$PK <- seq_len(nrow(out))
+  out$HEIGHT <- as.numeric(out[[height_col]])
+  pop_field <- resolve_noise_population_field(out, population_field)
+  if (!is.null(pop_field)) {
+    out$POP <- as.numeric(out[[pop_field]])
+    out$POP[is.na(out$POP) | out$POP < 0] <- 0
+    out$POP[!is.finite(out$POP)] <- 0
+  }
+  out <- out[!is.na(out$HEIGHT) & out$HEIGHT > 0, ]
+  if (nrow(out) == 0) {
+    stop("No buildings with positive finite height were found.", call. = FALSE)
+  }
+  keep <- unique(c("PK", "id", "group_id", "HEIGHT", "POP", attr(out, "sf_column")))
+  out[, intersect(keep, names(out))]
+}
+
+#' @noRd
+resolve_noise_population_field <- function(buildings, population_field = NULL) {
+  if (!is.null(population_field)) {
+    if (!population_field %in% names(buildings)) {
+      stop("`population_field` was not found in `x`: ", population_field, call. = FALSE)
+    }
+    return(population_field)
+  }
+  candidates <- c("POP", "pop_total", "population", "pop")
+  found <- candidates[candidates %in% names(buildings)]
+  if (length(found) == 0) return(NULL)
+  found[1]
+}
+
+#' @noRd
+prepare_noise_roads <- function(roads, quiet = TRUE) {
+  required_traffic <- c("speed_kmh", "light_veh_h", "heavy_veh_h")
+  if (!all(required_traffic %in% names(roads))) {
+    roads <- infer_osm_traffic(roads, quiet = quiet)
+  }
+  roads$PK <- seq_len(nrow(roads))
+  keep <- unique(c(
+    "PK", "highway", "highway_class", "name", "maxspeed", "lanes", "speed_kmh",
+    "light_veh_h", "heavy_veh_h", "traffic_source",
+    "LV_D", "LV_E", "LV_N", "HGV_D", "HGV_E", "HGV_N",
+    "MV_D", "MV_E", "MV_N", "WAV_D", "WAV_E", "WAV_N", "WBV_D", "WBV_E", "WBV_N",
+    "LV_SPD_D", "LV_SPD_E", "LV_SPD_N",
+    "HGV_SPD_D", "HGV_SPD_E", "HGV_SPD_N",
+    "MV_SPD_D", "MV_SPD_E", "MV_SPD_N",
+    "WAV_SPD_D", "WAV_SPD_E", "WAV_SPD_N",
+    "WBV_SPD_D", "WBV_SPD_E", "WBV_SPD_N",
+    "PVMT", "TEMP_D", "TEMP_E", "TEMP_N", "WAY",
+    attr(roads, "sf_column")
+  ))
+  roads[, intersect(keep, names(roads))]
+}
+
+#' @noRd
+prepare_noise_ground <- function(buildings,
+                                 greenspace = NULL,
+                                 canopy_height = NULL,
+                                 ground_default = 0,
+                                 green_ground = 1,
+                                 min_tree_height = 2) {
+  bbox_poly <- sf::st_as_sfc(sf::st_bbox(buildings))
+  bbox_sf <- sf::st_sf(G = ground_default, source = "default", geometry = bbox_poly)
+  sf::st_crs(bbox_sf) <- sf::st_crs(buildings)
+  green_layers <- list()
+
+  green_sf <- green_input_to_ground(greenspace, buildings, green_ground, "greenspace")
+  if (!is.null(green_sf)) green_layers[[length(green_layers) + 1L]] <- green_sf
+
+  canopy_sf <- canopy_to_ground(canopy_height, buildings, min_tree_height, green_ground)
+  if (!is.null(canopy_sf)) green_layers[[length(green_layers) + 1L]] <- canopy_sf
+
+  if (length(green_layers) == 0) {
+    return(bbox_sf)
+  }
+  green <- do.call(rbind, green_layers)
+  green <- suppressWarnings(sf::st_intersection(green, bbox_sf[, "geometry"]))
+  if (nrow(green) == 0) {
+    return(bbox_sf)
+  }
+  green <- green[, c("G", "source", attr(green, "sf_column"))]
+  rbind(bbox_sf, green)
+}
+
+#' @noRd
+make_noise_analysis_extent <- function(buildings, roads) {
+  bbox_values <- c(
+    xmin = min(sf::st_bbox(buildings)[["xmin"]], sf::st_bbox(roads)[["xmin"]]),
+    ymin = min(sf::st_bbox(buildings)[["ymin"]], sf::st_bbox(roads)[["ymin"]]),
+    xmax = max(sf::st_bbox(buildings)[["xmax"]], sf::st_bbox(roads)[["xmax"]]),
+    ymax = max(sf::st_bbox(buildings)[["ymax"]], sf::st_bbox(roads)[["ymax"]])
+  )
+  bbox <- structure(bbox_values, class = "bbox", crs = sf::st_crs(buildings))
+  sf::st_sf(geometry = sf::st_as_sfc(bbox))
+}
+
+#' @noRd
+green_input_to_ground <- function(greenspace, template, green_ground, source) {
+  if (is.null(greenspace)) return(NULL)
+  if (inherits(greenspace, "sf")) {
+    out <- sf::st_transform(greenspace, sf::st_crs(template))
+    out$G <- green_ground
+    out$source <- source
+    return(out[, c("G", "source", attr(out, "sf_column"))])
+  }
+  if (inherits(greenspace, "SpatRaster")) {
+    r <- terra::project(greenspace[[1]], sf::st_crs(template)$wkt, method = "near")
+    r <- terra::ifel(!is.na(r) & r > 0, 1, NA)
+    return(raster_mask_to_ground(r, green_ground, source))
+  }
+  stop("`greenspace` must be an sf object or terra SpatRaster when supplied.", call. = FALSE)
+}
+
+#' @noRd
+canopy_to_ground <- function(canopy_height, template, min_tree_height, green_ground) {
+  if (is.null(canopy_height)) return(NULL)
+  if (!inherits(canopy_height, "SpatRaster")) {
+    stop("`canopy_height` must be a terra SpatRaster when supplied.", call. = FALSE)
+  }
+  r <- terra::project(canopy_height[[1]], sf::st_crs(template)$wkt, method = "near")
+  r <- terra::ifel(!is.na(r) & r >= min_tree_height, 1, NA)
+  raster_mask_to_ground(r, green_ground, "canopy")
+}
+
+#' @noRd
+raster_mask_to_ground <- function(r, green_ground, source) {
+  if (all(is.na(terra::values(r, mat = FALSE)))) return(NULL)
+  poly <- suppressWarnings(sf::st_as_sf(terra::as.polygons(r, dissolve = TRUE, na.rm = TRUE)))
+  if (nrow(poly) == 0) return(NULL)
+  poly$G <- green_ground
+  poly$source <- source
+  poly[, c("G", "source", attr(poly, "sf_column"))]
+}
+
+#' @noRd
+make_noise_receiver_grid <- function(buildings, roads, resolution) {
+  bbox <- sf::st_bbox(buildings)
+  if ((bbox[["xmax"]] - bbox[["xmin"]]) < resolution) {
+    pad <- (resolution - (bbox[["xmax"]] - bbox[["xmin"]])) / 2
+    bbox[["xmin"]] <- bbox[["xmin"]] - pad
+    bbox[["xmax"]] <- bbox[["xmax"]] + pad
+  }
+  if ((bbox[["ymax"]] - bbox[["ymin"]]) < resolution) {
+    pad <- (resolution - (bbox[["ymax"]] - bbox[["ymin"]])) / 2
+    bbox[["ymin"]] <- bbox[["ymin"]] - pad
+    bbox[["ymax"]] <- bbox[["ymax"]] + pad
+  }
+  bbox_values <- c(
+    xmin = bbox[["xmin"]],
+    ymin = bbox[["ymin"]],
+    xmax = bbox[["xmax"]],
+    ymax = bbox[["ymax"]]
+  )
+  combined_bbox <- structure(bbox_values, class = "bbox", crs = sf::st_crs(buildings))
+  grid <- sf::st_make_grid(sf::st_as_sfc(combined_bbox), cellsize = resolution, what = "centers")
+  coords <- sf::st_coordinates(grid)
+  grid_z <- sf::st_sfc(
+    lapply(seq_len(nrow(coords)), function(i) sf::st_point(c(coords[i, "X"], coords[i, "Y"], 4))),
+    crs = sf::st_crs(buildings)
+  )
+  receivers <- sf::st_sf(PK = seq_along(grid_z), id = seq_along(grid_z), HEIGHT = 4, geometry = grid_z)
+  outside <- receivers[lengths(sf::st_intersects(receivers, buildings)) == 0, ]
+  if (nrow(outside) > 0) {
+    return(outside)
+  }
+  centroid <- sf::st_coordinates(suppressWarnings(sf::st_centroid(sf::st_union(sf::st_geometry(buildings)))))
+  fallback_geom <- sf::st_sfc(sf::st_point(c(centroid[1, "X"], centroid[1, "Y"], 4)), crs = sf::st_crs(buildings))
+  sf::st_sf(PK = 1L, id = 1L, HEIGHT = 4, geometry = fallback_geom)
+}
+
+#' @noRd
+write_noise_gpkg <- function(gpkg, buildings, roads, ground, receivers = NULL, quiet = TRUE) {
+  if (file.exists(gpkg)) unlink(gpkg)
+  sf::st_write(buildings, gpkg, layer = "BUILDINGS", quiet = quiet)
+  if (!is.null(roads)) {
+    sf::st_write(roads, gpkg, layer = "ROADS", quiet = quiet, append = TRUE)
+  }
+  sf::st_write(ground, gpkg, layer = "GROUND", quiet = quiet, append = TRUE)
+  if (!is.null(receivers)) {
+    sf::st_write(receivers, gpkg, layer = "RECEIVERS", quiet = quiet, append = TRUE)
+  }
+  invisible(gpkg)
+}
+
+#' @noRd
+normalize_osm_highway <- function(highway) {
+  vapply(highway, function(x) {
+    if (length(x) == 0 || all(is.na(x))) return(NA_character_)
+    x <- as.character(x[[1]])
+    if (is.na(x) || !nzchar(x)) return(NA_character_)
+    strsplit(x, ";|,")[[1]][1]
+  }, character(1))
+}
+
+#' @noRd
+parse_osm_speed_kmh <- function(maxspeed) {
+  speed <- parse_osm_number(maxspeed)
+  text <- tolower(vapply(maxspeed, function(x) {
+    if (length(x) == 0 || all(is.na(x))) return("")
+    as.character(x[[1]])
+  }, character(1)))
+  speed[grepl("mph", text) & !is.na(speed)] <- speed[grepl("mph", text) & !is.na(speed)] * 1.609344
+  speed
+}
+
+#' @noRd
+parse_osm_number <- function(x) {
+  vapply(x, function(value) {
+    if (length(value) == 0 || all(is.na(value))) return(NA_real_)
+    text <- as.character(value[[1]])
+    match <- regmatches(text, regexpr("[0-9]+(\\.[0-9]+)?", text))
+    if (length(match) == 0 || !nzchar(match)) return(NA_real_)
+    as.numeric(match)
+  }, numeric(1))
+}
+
+#' @noRd
+parse_osm_oneway <- function(x) {
+  text <- tolower(vapply(x, function(value) {
+    if (length(value) == 0 || all(is.na(value))) return("")
+    as.character(value[[1]])
+  }, character(1)))
+  text %in% c("yes", "true", "1", "-1")
+}
