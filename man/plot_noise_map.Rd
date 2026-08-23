@@ -16,6 +16,13 @@ plot_noise_map(
   road_alpha = 0.35,
   road_lwd = 1.4,
   building_col = "black",
+  legend = TRUE,
+  legend_width = 0.26,
+  legend_cex = 0.85,
+  scalebar = FALSE,
+  scalebar_unit = c("km", "m", "auto"),
+  scalebar_cex = 0.7,
+  mar = c(0.2, 0.2, 0.2, 0.2),
   add = FALSE,
   ...
 )
@@ -47,6 +54,27 @@ opaque.}
 \item{road_lwd}{Road overlay line width.}
 
 \item{building_col}{Building fill color. Use \code{NA} to omit buildings.}
+
+\item{legend}{Logical. Draw the dB(A) class legend in a dedicated panel to
+the right of the map. Defaults to \code{TRUE}.}
+
+\item{legend_width}{Width of the legend panel relative to the map panel.
+Smaller values give the map more room. Defaults to \code{0.26}.}
+
+\item{legend_cex}{Legend text size. Defaults to \code{0.85}.}
+
+\item{scalebar}{Logical. Draw a distance scale bar just below the legend
+(or in the bottom-left of the map when \code{legend = FALSE}). Defaults to
+\code{FALSE}. Distances assume a projected CRS in metres; for geographic
+coordinates they are approximated at the map's mid-latitude.}
+
+\item{scalebar_unit}{Scale bar unit: \code{"km"} (default), \code{"m"}, or \code{"auto"}
+to pick whichever keeps the label readable.}
+
+\item{scalebar_cex}{Scale bar label size. Defaults to \code{0.7}.}
+
+\item{mar}{Margins (in lines) around the map panel. Defaults to a tight
+margin so the map fills the device.}
 
 \item{add}{Logical. If \code{TRUE}, add to the current plot.}
 

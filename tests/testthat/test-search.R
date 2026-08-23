@@ -131,6 +131,57 @@ testthat::test_that("internal source id is optional in returned data", {
   testthat::expect_equal(kept$source_id, "a")
 })
 
+testthat::test_that("GBA reader falls back to bbox tiling", {
+  make_square <- function(xmin, ymin, xmax, ymax) {
+    sf::st_polygon(list(matrix(
+      c(xmin, ymin,
+        xmin, ymax,
+        xmax, ymax,
+        xmax, ymin,
+        xmin, ymin),
+      ncol = 2,
+      byrow = TRUE
+    )))
+  }
+
+  calls <- 0L
+  mocked_read_gba_bbox <- function(bbox) {
+    calls <<- calls + 1L
+    if (calls == 1L) {
+      stop("HTTP error code : 504", call. = FALSE)
+    }
+    bb <- sf::st_bbox(bbox)
+    sf::st_sf(
+      id = paste0("tile-", calls),
+      height = calls,
+      geometry = sf::st_sfc(
+        make_square(bb[["xmin"]], bb[["ymin"]], bb[["xmin"]] + 0.001, bb[["ymin"]] + 0.001),
+        crs = 4326
+      )
+    )
+  }
+
+  namespace <- asNamespace("gloBFPr")
+  old_read_gba_bbox <- get("read_gba_bbox", envir = namespace)
+  unlockBinding("read_gba_bbox", namespace)
+  assign("read_gba_bbox", mocked_read_gba_bbox, envir = namespace)
+  lockBinding("read_gba_bbox", namespace)
+  on.exit({
+    unlockBinding("read_gba_bbox", namespace)
+    assign("read_gba_bbox", old_read_gba_bbox, envir = namespace)
+    lockBinding("read_gba_bbox", namespace)
+  }, add = TRUE)
+
+  result <- getFromNamespace("read_gba_buildings", "gloBFPr")(
+    sf::st_as_sfc(sf::st_bbox(c(xmin = -83.1, ymin = 42.3, xmax = -83.0, ymax = 42.4), crs = 4326)),
+    quiet = TRUE
+  )
+
+  testthat::expect_gt(calls, 1L)
+  testthat::expect_s3_class(result, "sf")
+  testthat::expect_true(all(c("Height", ".source_id", "geometry") %in% names(result)))
+})
+
 testthat::test_that("assign_building_group_id groups touching polygons", {
   make_square <- function(xmin, ymin, xmax, ymax) {
     sf::st_polygon(list(matrix(

@@ -1,0 +1,418 @@
+---
+title: "Urban Wind and Thermal CFD with gloBFPr and OpenFOAM"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{Urban Wind and Thermal CFD with gloBFPr and OpenFOAM}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, message=FALSE, eval=FALSE}
+library(gloBFPr)
+library(sf)
+library(terra)
+library(ggplot2)
+```
+
+`gloBFPr` connects three steps in one R session: collecting urban spatial data,
+writing OpenFOAM configuration files, and visualising CFD results as maps.
+Two simulation modes are supported:
+
+| Mode | Solver | Driven by |
+|---|---|---|
+| Daytime wind | `simpleFoam` (k–ε) | Atmospheric boundary-layer inlet |
+| Nocturnal drainage | `buoyantBoussinesqSimpleFoam` (k–ω SST) | Surface temperature differentials |
+
+Both modes share the same spatial input pipeline and the same ERA5 weather
+fetch — only the case-file generation and post-processing differ.
+
+---
+
+# 1  Quick start {#quick-start}
+
+The package ships with a small Detroit-area dataset. No API keys are needed.
+
+```{r qs-data, eval=FALSE}
+data(globfp_example)
+buildings_list <- list(poly = globfp_example, binary = NULL, graduated = NULL)
+foam_case <- file.path(path.expand("~"), "openfoam_quickstart")
+
+foam_inputs <- prepare_openfoam_inputs(
+  case_dir          = foam_case,
+  buildings_list    = buildings_list,
+  height_col        = "Height",
+  include_buildings = TRUE,
+  include_fused_dsm = FALSE, 
+  include_tree_canopy = FALSE,
+  include_morphology = FALSE, 
+  include_neighbors  = FALSE,
+  include_greenspace = FALSE,
+  overwrite = TRUE, quiet = TRUE
+)
+
+case_files <- prepare_openfoam_case(
+  case_dir = foam_inputs$case_dir, stl_file = foam_inputs$files$building_stl,
+  domain = foam_inputs$domain, inlet_velocity = c(5, 0, 0),
+  z_ref = 10, z0 = 0.1, base_cell_size = 5, n_iterations = 500L, overwrite = TRUE
+)
+
+run_openfoam_docker(case_dir = foam_inputs$case_dir,
+                    image = "opencfd/openfoam-run:2506", wait = TRUE)
+
+slice <- sample_foam_slice(case_dir = foam_inputs$case_dir,
+                           fields = c("U", "p"), z = 1.5,
+                           image = "opencfd/openfoam-run:2506", resolution = 5)
+
+plot_foam_map(slice, layer = "U_mag",
+              palette = "YlOrRd", legend_title = "Speed (m/s)")
+```
+
+---
+
+# 2  Inputs {#inputs}
+
+Both simulation modes use the same two input sources: spatial layers from
+`prepare_openfoam_inputs()` and meteorological conditions from `get_era5_met()`.
+Set them up once, then pass the results to either simulation.
+
+## 2.1  Spatial layers
+
+`prepare_openfoam_inputs()` collects four categories of data and writes them
+into a structured case folder:
+
+| Layer | File | Used for |
+|---|---|---|
+| Building STL | `constant/triSurface/buildings.stl` | Solid geometry (`snappyHexMesh`) |
+| Terrain DEM | `rasters/fused_dsm.tif` | Ground surface STL |
+| Canopy height (CHM) | `rasters/canopy_height.tif` | Porous-zone extents |
+| Ground roughness (z0) | `rasters/ground_roughness_z0.tif` | `nutURoughWallFunction` |
+
+```{r inputs-spatial, eval=FALSE}
+foam_inputs <- prepare_openfoam_inputs(
+  case_dir            = "~/openfoam_cases/detroit",
+  bbox                = c(-83.065644, 42.333792, -83.045217, 42.346988),
+  # target_crs is optional — the local UTM zone is chosen automatically
+  include_buildings   = TRUE,
+  include_fused_dsm   = TRUE,                     # OpenTopography DEM
+  include_tree_canopy = TRUE,                     # Meta CHM → porous zones
+  canopy_source       = "metachm",
+  min_tree_height     = 2,
+  include_morphology  = TRUE,
+  include_neighbors   = TRUE,
+  include_greenspace  = TRUE,           # land cover → z0 raster
+  mask_tree_cover     = TRUE,
+  landcover_source    = "esri",         # "esa" (2020-2021) or "esri" (2017-2025)
+  landcover_year      = 2022,           # any year 2017-2025 with "esri"
+  opentopo_key        = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  overwrite           = TRUE
+)
+```
+
+### Ground roughness z0 from land-cover data
+
+When `include_greenspace = TRUE`, land-cover is reclassified to aerodynamic
+roughness length z0 and saved to `ground_roughness_z0.tif`. This drives
+`nutURoughWallFunction` on the ground patch and determines the land-cover
+temperature patches in the nocturnal case.
+
+Two datasets are available via `landcover_source`:
+
+**`"esa"`** — ESA WorldCover (years 2020, 2021 only):
+
+| ESA class | Description | z0 (m) |
+|---|---|---|
+| 10 | Tree cover | `NA` — porous zone |
+| 20 | Shrubland | 0.20 |
+| 30 | Grassland | 0.05 |
+| 40 | Cropland | 0.05 |
+| 50 | Built-up | 0.50 |
+| 60 | Bare / sparse | 0.01 |
+| 80 | Permanent water | 0.0002 |
+| 90 | Herbaceous wetland | 0.05 |
+
+**`"esri"`** — Sentinel-2 10 m ESRI LULC Time Series (years 2017–2025).
+Use this when you need a year outside 2020–2021, or want consistent annual
+maps for before-and-after comparisons:
+
+| ESRI class | Name | Description | z0 (m) |
+|---|---|---|---|
+| 2 | Trees | Tall dense vegetation (≥ ~4.5 m); wooded areas, mangroves | `NA` — porous zone |
+| 11 | Rangeland | Parks, lawns, pastures, savannas, sparse shrub/grass | 0.10 |
+| 5 | Crops | Cereals, grasses, soy, fallow (not at tree height) | 0.05 |
+| 4 | Flooded vegetation | Rice paddies, flooded mangroves, emergent vegetation | 0.05 |
+| 7 | Built area | Roads, buildings, parking lots, impervious surfaces | 0.50 |
+| 8 | Bare ground | Rock, sand, desert, dry lake beds, mines | 0.01 |
+| 9 | Snow / ice | Glaciers, permanent snowpack | 0.001 |
+| 1 | Water | Rivers, ponds, lakes, oceans | 0.0002 |
+| 10 | Clouds | No data due to persistent cloud cover | 0.03 (fallback) |
+
+```{r inputs-z0, eval=FALSE}
+z0_rast <- rast(foam_inputs$files$roughness_raster)
+z0_mean <- global(z0_rast, "mean", na.rm = TRUE)[[1]]
+cat(sprintf("Mean z0 = %.4f m\n", z0_mean))
+```
+
+### Tree canopy as porous zones
+
+When `include_tree_canopy = TRUE`, a canopy height model (CHM) is saved to
+`canopy_height.tif`. In OpenFOAM it defines the extent of an
+`explicitPorositySource` (Darcy–Forchheimer drag) in `constant/fvOptions`:
+
+```
+vegetationSource
+{
+    type  explicitPorositySource;
+    explicitPorositySourceCoeffs
+    {
+        selectionMode  cellZone;
+        cellZone       vegetationZone;   // extents from canopy_height.tif
+        type           DarcyForchheimer;
+        DarcyForchheimerCoeffs
+        {
+            d  d [0 -2 0 0 0 0 0] (500 500 500);  // leaf-area drag (m-2)
+            f  f [0 -1 0 0 0 0 0] (0   0   0  );
+        }
+    }
+}
+```
+
+Typical urban-tree drag values range from 200 m⁻² (sparse street trees) to
+800 m⁻² (dense woodland).
+
+## 2.2  ERA5 weather conditions
+
+Both simulations need meteorological boundary conditions: wind (daytime) and
+air / surface temperatures (nocturnal). `get_era5_met()` fetches hourly ERA5
+reanalysis data from the Copernicus Climate Data Store.
+
+**One-time setup:** register at <https://cds.climate.copernicus.eu>, copy your
+personal access token, then store it:
+
+```r
+# Add to ~/.Renviron so it loads automatically every session
+CDS_API_KEY=your-token-here
+```
+
+```{r inputs-era5-wind, eval=FALSE}
+# Daytime — fetches 10-m wind components and 2-m temperature
+met <- get_era5_met(
+  lon      = -83.05,
+  lat      =  42.34,
+  datetime = "2023-07-15 14:00",
+  cds_key = Sys.getenv("CDS_API_KEY")
+)
+# met$inlet_velocity  →  c(u10, v10, 0) m/s, ready for prepare_openfoam_case()
+# met$T_ref           →  2-m temperature in K
+```
+
+```{r inputs-era5-noc, eval=FALSE}
+# Nocturnal — adds a land-cover cooling model anchored to ERA5 skin temperature
+noc_met <- get_era5_met(
+  lon                = -83.05,
+  lat                =  42.34,
+  datetime           = "2023-07-15 22:00",   # UTC
+  hours_after_sunset = 3
+)
+# noc_met$T_ref          →  2-m air temperature in K
+# noc_met$surface_temps  →  named vector (tree, grass, crop, bare, built, water)
+```
+
+### Land-cover cooling rates
+
+The cooling rates applied by `get_era5_met(hours_after_sunset)` are based on
+Oke (1987) and Erell et al. (2011), anchored to the ERA5 skin temperature:
+
+| Land cover | Cooling rate (K/h) | Notes |
+|---|---|---|
+| Tree cover | ~1.0 | Transpiration accelerates cooling |
+| Shrub / grass / crop | 0.6–0.7 | Vegetated, moderate cooling |
+| Bare / sparse | ~0.5 | Low thermal mass |
+| Built-up | ~0.4 | Tracks air T; anchored to T_ref |
+| Water / wetland | ~0.05 | Very high thermal mass |
+
+To override with field measurements or satellite LST instead, pass
+`surface_temps` directly to `prepare_nocturnal_case()`:
+
+```{r inputs-era5-override, eval=FALSE}
+# Example: use satellite-derived values instead of the ERA5 cooling model
+surface_temps_obs <- c(tree = 289, grass = 290, built = 293, water = 294)
+```
+
+---
+
+# 3  Daytime wind simulation {#wind}
+
+## 3.1  Write OpenFOAM case files
+
+Plug `foam_inputs` (Section 2.1) and `met` (Section 2.2) directly in:
+
+```{r wind-case, eval=FALSE}
+case_files <- prepare_openfoam_case(
+  case_dir            = foam_inputs$case_dir,
+  stl_file            = foam_inputs$files$building_stl,
+  domain              = foam_inputs$domain,
+  inlet_velocity      = met$inlet_velocity,   # ERA5 u10, v10
+  z_ref               = met$z_ref,            # 10 m
+  z0                  = z0_mean,              # domain-mean from roughness raster
+  base_cell_size      = 10,
+  building_refinement = 2L, 
+  n_iterations        = 1000L,
+  overwrite           = TRUE
+)
+```
+
+## 3.2  Run via Docker
+
+```{r wind-run, eval=FALSE}
+run_openfoam_docker(
+  case_dir = foam_inputs$case_dir,
+  image    = "opencfd/openfoam-run:2506",
+  wait     = TRUE
+)
+```
+
+Typical wall-clock times (10 CPU cores, 1 000 iterations):
+
+| Domain | `base_cell_size` | ~Time |
+|---|---|---|
+| 500 × 500 m | 5 m | 30–60 min |
+| 1 km × 1 km | 5 m | 2–4 h |
+
+## 3.3  Visualise results
+
+```{r wind-viz, eval=FALSE}
+slice <- sample_foam_slice(
+  case_dir = foam_inputs$case_dir, fields = c("U", "p"),
+  z = 1.5, image = "opencfd/openfoam-run:2506", resolution = 2
+)
+
+# Wind speed — buildings overlaid automatically
+plot_foam_map(slice, layer = "U_mag",
+              palette = "YlOrRd", legend_title = "Speed (m/s)",
+              title = "Pedestrian wind speed at 1.5 m AGL")
+
+# Speed with flow vectors
+p <- plot_foam_map(slice, layer = "U_mag",
+                   palette = "Blues", reverse = TRUE,
+                   legend_title = "Speed (m/s)")
+add_flow_vectors(p, slice, spacing = 20, colour = "grey20",
+                 alpha = 0.7, linewidth = 0.25, arrow_size = 0.07)
+
+# Wind speed ratio (> 1.3 = potentially uncomfortable)
+plot_foam_map(slice, layer = "U_mag", palette = "RdYlGn", reverse = TRUE,
+              legend_title = "U / U_ref",
+              max_u_ref = sqrt(sum(met$inlet_velocity^2)))
+
+# Pressure
+plot_foam_map(slice, layer = "p",
+              palette = "RdBu", legend_title = "p (m² s⁻²)")
+```
+
+> All `plot_foam_map()` calls return a plain `ggplot` object.
+> Export with `ggsave("wind_map.png", width = 10, height = 8, dpi = 300)`.
+
+---
+
+# 4  Nocturnal cold-air drainage simulation {#nocturnal}
+
+After sunset, vegetated surfaces cool faster than buildings, making the air
+near the ground denser. That cooler, denser air drains under gravity into
+street canyons and low-lying areas. `buoyantBoussinesqSimpleFoam` with k–ω SST
+models this; no wind inlet is needed — all flow is driven by the surface
+temperature pattern.
+
+| | Wind | Nocturnal |
+|---|---|---|
+| Solver | `simpleFoam` | `buoyantBoussinesqSimpleFoam` |
+| Turbulence | k–ε | k–ω SST |
+| Inlet | ABL log-law | open (zero-gradient) |
+| Key extra fields | — | T, p_rgh, alphat, omega |
+
+## 4.1  Write nocturnal case files
+
+Plug `foam_inputs` and `noc_met` directly in:
+
+```{r noc-case, eval=FALSE}
+noc_files <- prepare_nocturnal_case(
+  case_dir            = foam_inputs$case_dir,
+  stl_file            = foam_inputs$files$building_stl,
+  domain              = foam_inputs$domain,
+  T_ref               = noc_met$T_ref,          # 2-m ERA5 temperature
+  surface_temps       = noc_met$surface_temps,  # ERA5 cooling model
+  z0                  = 0.1,
+  roughness_raster    = foam_inputs$files$roughness_raster,
+  base_cell_size      = 10,
+  building_refinement = 2L,
+  n_iterations        = 2000L,
+  write_interval      = 200L,
+  overwrite           = TRUE
+)
+```
+
+## 4.2  Run via Docker
+
+```{r noc-run, eval=FALSE}
+run_openfoam_docker(
+  case_dir = noc_files$case_dir,
+  image    = "opencfd/openfoam-run:2506",
+  wait     = TRUE
+)
+```
+
+Typical wall-clock times (10 CPU cores, 2 000 iterations):
+
+| Domain | `base_cell_size` | ~Time |
+|---|---|---|
+| 500 × 500 m | 10 m | 30–60 min |
+| 500 × 500 m | 5 m | 3–5 h |
+| 1 km × 1 km | 10 m | 2–4 h |
+
+Check convergence — T residual and continuity error are the key indicators:
+
+```{r noc-convergence, eval=FALSE}
+log <- readLines(file.path(noc_files$case_dir, "log.simpleFoam"))
+grep("Solving for T",        log, value = TRUE) |> tail(10)
+grep("time step continuity", log, value = TRUE) |> tail(10)
+# Target: T residual < 1e-3, continuity < 1e-6
+# If not reached by 2 000 iterations, increase n_iterations to 3 000–5 000
+```
+
+## 4.3  Visualise results
+
+`read_foam_pedestrian_slice()` auto-detects the latest time step, applies
+gap-filling and Gaussian smoothing, and overlays building footprints
+automatically:
+
+```{r noc-read, eval=FALSE}
+maps <- read_foam_pedestrian_slice(
+  case_dir  = noc_files$case_dir,
+  T_ref     = noc_met$T_ref,
+  time_step = "latest",
+  resolution = 2
+)
+# Layers: T_air, U_mag, T_cool, T_cool_flux, Ux, Uy
+```
+
+```{r noc-viz, eval=FALSE}
+# Cooling below ambient — where cold air pools
+plot_foam_map(maps, layer = "T_cool", palette = "Blues",
+              legend_title = "Cooling (K)",
+              title = "Cold-air pooling at 1.5 m AGL")
+
+# Drainage flow speed
+plot_foam_map(maps, layer = "U_mag", palette = "YlGnBu",
+              legend_title = "Speed (m/s)",
+              title = "Drainage-flow velocity at 1.5 m AGL")
+
+# Cool-air transport flux with flow vectors
+p <- plot_foam_map(maps, layer = "T_cool_flux", palette = "Blues",
+                   legend_title = "Cool-air flux\n(K·m/s)",
+                   title = "Cool-air corridors at 1.5 m AGL")
+add_flow_vectors(p, maps, spacing = 20, colour = "grey20",
+                 alpha = 0.7, linewidth = 0.25, arrow_size = 0.07)
+```
+
+> **ERA5 accuracy note.** ERA5 has ~28 km spatial resolution. Local effects
+> (urban heat islands, valley channelling, lake breezes) can cause site-level
+> conditions to differ by 20–50 % from the reanalysis. For high-stakes
+> applications, supplement with a nearby weather station.

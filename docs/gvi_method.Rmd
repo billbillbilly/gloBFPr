@@ -1,5 +1,0 @@
----
-title: "gvi_method"
-output: html_document
----
-

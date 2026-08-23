@@ -11,7 +11,7 @@ get_noise_map(
   datasource_greenspace = NULL,
   greenspace_year = NULL,
   greenspace_zoom = 17,
-  key = NULL,
+  opentopo_key = NULL,
   roads = NULL,
   greenspace = NULL,
   canopy_height = NULL,
@@ -79,7 +79,7 @@ tiles. (This has to be specified when \code{datasource_greenspace = "sentinel2"}
 \item{greenspace_zoom}{numeric. Zoom level of map tile when
 \code{datasource_greenspace = "esri"} or \code{"sentinel2"}.}
 
-\item{key}{OpenTopography API key used to retrieve DEM data internally when
+\item{opentopo_key}{OpenTopography API key used to retrieve DEM data internally when
 \code{dem} is not supplied.}
 
 \item{roads}{Optional \code{sf} line object, usually from OSM. If \code{NULL}, OSM
@@ -95,13 +95,15 @@ greater than or equal to \code{min_tree_height} are treated as green ground.}
 \item{dem}{Optional \code{terra::SpatRaster} terrain layer.}
 
 \item{population}{Logical. If \code{TRUE}, assign GHSL population to buildings
-with \code{\link[=get_pop_density]{get_pop_density()}} (or \code{get_pop()} when available) before writing NoiseModelling \code{BUILDINGS}. Existing \code{POP}
+with the package population helper (or \code{get_pop()} when available) before writing
+NoiseModelling \code{BUILDINGS}. Existing \code{POP}
 or \code{population_field} values are used when available.}
 
 \item{population_field}{Optional column containing building population. The
 value is copied to NoiseModelling's \code{POP} field.}
 
-\item{population_year}{GHSL population year passed to the package population function when
+\item{population_year}{GHSL population year passed to the package population
+function when
 \code{population = TRUE} and no usable population field is already present.}
 
 \item{min_tree_height}{Minimum canopy height treated as green cover.}

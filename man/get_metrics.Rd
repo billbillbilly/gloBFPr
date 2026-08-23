@@ -3,8 +3,6 @@
 \name{get_metrics}
 \alias{get_metrics}
 \alias{get_morphology}
-\alias{get_pop_density}
-\alias{get_residential}
 \alias{get_neighbors}
 \alias{get_bgvi}
 \alias{get_dng}
@@ -13,14 +11,10 @@
 get_morphology(
   x = NULL,
   metrics = c("g_area", "pmeter", "v_surf", "t_surf", "vol", "obb_vol", "pa_ratio",
-    "rec", "rec", "fra", "cbn", "hem", "cnv", "me_dist", "mp_dist", "vol_exch", "elo_x",
+    "rec", "fra", "cbn", "hem", "cnv", "me_dist", "mp_dist", "vol_exch", "elo_x",
     "elo_y", "elo_z"),
   quiet = FALSE
 )
-
-get_pop_density(x = NULL, year = 2025, distance = NULL, quiet = FALSE)
-
-get_residential(x = NULL, year = NULL, threshold = 80, quiet = FALSE)
 
 get_neighbors(x = NULL, radius = 500, quiet = FALSE)
 
@@ -39,6 +33,7 @@ get_bgvi(
   field_of_view = 45,
   directions = NULL,
   workers = NULL,
+  resolution = NULL,
   key = NULL,
   quiet = FALSE
 )
@@ -52,6 +47,10 @@ get_dng(
   min_area = 500,
   unit = c("m2", "ha", "km2"),
   year = NULL,
+  network = NULL,
+  overpass_url = "https://overpass-api.de/api/interpreter",
+  timeout = 180,
+  workers = NULL,
   quiet = FALSE
 )
 }
@@ -61,19 +60,6 @@ get_dng(
 \item{metrics}{vector. A list of metrics to be computed. All metrics will be computed by default.}
 
 \item{quiet}{logical. If \code{TRUE}, suppress cli messages and progress bars.}
-
-\item{year}{numeric. The desired year for Sentinel-2 cloudless mosaic
-tiles. (This has to be specified when \code{datasource_greenspace = "sentinel2"})}
-
-\item{distance}{numeric. (optional, only used by \code{get_pop_density}) Buffer
-radius in meters around each building centroid for population aggregation.
-If \code{NULL}, population density is extracted from the GHSL cell containing the
-building centroid. Default is \code{NULL}.}
-
-\item{threshold}{numeric. threshould (\%) for decide whether a building is
-residential or not. For example, if \code{threshold = 70}, a building, located in
-a cell with more than 70\% is residential building footprint area, is classified
-as residential.}
 
 \item{radius}{numeric. (only required for \code{get_neighbors}, \code{get_gbvi}, and
 \code{get_dng})
@@ -106,6 +92,9 @@ Zoom level of map tile when \code{datasource_greenspace = "esri"} or
 The default is \code{17}. The higher level of zoom will lead to higher resolution
 of greenspace data for computing BGVI or DNG.}
 
+\item{year}{numeric. The desired year for Sentinel-2 cloudless mosaic
+tiles. (This has to be specified when \code{datasource_greenspace = "sentinel2"})}
+
 \item{floor}{logical. (only required for \code{get_bgvi})
 Whether to compute Building Green View Index (BGVI) for each floor level
 based on estimated number of floors. Default is \code{FALSE}.}
@@ -128,9 +117,15 @@ direction-specific GVI. Valid values are \code{"southwest"},
 \code{"east"}, \code{"west"}, and \code{"south"}. If \code{NULL},
 \code{field_of_view} is ignored and only non-directional GVI columns are returned.}
 
-\item{workers}{integer. (only required for \code{get_bgvi}) Number of parallel
-workers. Defaults to one fewer than available cores, capped at 4. Use
-\code{workers = 1} to run sequentially and reduce memory pressure.}
+\item{workers}{integer. (only required for \code{get_dng}) Number of parallel
+workers for per-building distance computation. Defaults to one fewer than
+available cores. Use \code{workers = 1} to run sequentially.}
+
+\item{resolution}{numeric or \code{NULL}. (only used by \code{get_bgvi}) Output
+raster resolution in meters for the internal DSM used for viewshed
+computation. If \code{NULL} (default), the finest native resolution among the
+downloaded DEM and canopy height model is used, matching
+\code{\link[=get_fused_dsm]{get_fused_dsm()}}. Set explicitly (e.g. \code{1}) to force a finer grid.}
 
 \item{key}{character. (only required for \code{get_bgvi})
 API key of OpenTopography.}
@@ -143,6 +138,22 @@ For example, when \code{min_area = 500}, any greenspace patches with area less t
 
 \item{unit}{character. (only required for \code{get_dng}) The unit for
 \code{min_area}: 'm2','ha', and 'km2'.}
+
+\item{network}{\code{NULL}, character, or \code{sf}. (only required for \code{get_dng})
+Controls whether distances are measured along a real street network instead
+of in a straight line. Use \code{NULL} (the default) for straight-line distance,
+\code{"osm"} to download a walkable OpenStreetMap network for the study extent,
+or supply your own \code{sf} line layer of road/path centre lines. When routing
+is requested, the distance is the sum of the walk from the building centroid
+to the network, the shortest path along the network, and the walk from the
+network to the green-space pixel.}
+
+\item{overpass_url}{character. (only required for \code{get_dng} when
+\code{network = "osm"}) Overpass API endpoint used to download the street
+network.}
+
+\item{timeout}{numeric. (only required for \code{get_dng} when \code{network = "osm"})
+Overpass query timeout in seconds. Default is 180.}
 }
 \value{
 \code{get_morphology} returns an \code{sf} object identical to input \code{x},
@@ -165,29 +176,6 @@ with additional columns for:
 \item \code{vol_exch}: Volume exchange ratio
 \item \code{elo_x/elo_y/elo_z}: Elongation ratios (x/y/z axis)
 }
-If \code{x} contains a \code{group_id} column, morphology metrics are computed
-once per group and copied back to each original row in that group. The returned
-rows and geometries are not dissolved.
-
-\code{get_pop_density} returns an \code{sf} object identical to input \code{x},
-with added columns:
-\itemize{
-\item \code{pop_total}: Estimated total population in the GHSL cell
-containing the building centroid, or within the centroid buffer if
-\code{distance} is provided.
-\item \code{pop_den}: Estimated population density (people per square
-meter) in the GHSL cell containing the building centroid, or within the
-centroid buffer if \code{distance} is provided.
-}
-
-\code{get_residential} returns an \code{sf} object identical to input \code{x},
-with additional columns :
-\code{res}: logical. Whether the building is residential or not.
-\code{res_pct}: numeric. Residential built-up surface percentage in the
-matched GHSL cell.
-\code{total_built_vals}, \code{nres_vals}, and \code{res_vals}: numeric.
-Extracted total, non-residential, and residential built-up surface values
-from the matched GHSL cell.
 
 \code{get_neighbors} returns an \code{sf} object identical to input \code{x},
 with additional columns for:
@@ -208,6 +196,9 @@ with additional columns for:
 viewpoint, 1.7 m above ground.
 \item \code{top_gvi}: Building Green View Index from the top viewpoint.
 For short buildings, this is equal to \code{bottom_gvi}.
+\item \code{bottom_green_area}: Visible green area (m\eqn{^2}) from the bottom viewpoint.
+\item \code{top_green_area}: Visible green area (m\eqn{^2}) from the top viewpoint.
+\item \code{mean_green_area}: Mean visible green area (m\eqn{^2}) across viewpoints.
 \item \code{min_gvi}, \code{max_gvi}, \code{sd_gvi}: Minimum, maximum,
 and standard deviation of Green View Index (GVI) (if \code{floor = TRUE}).
 \item \code{estimated_floors}: Estimated number of floors based on building height
@@ -215,8 +206,13 @@ and standard deviation of Green View Index (GVI) (if \code{floor = TRUE}).
 }
 
 \code{get_dng} returns an \code{sf} object identical to input \code{x},
-with an additional column:
-\code{dng}: Distance to nearest green space (tree canopy pixe)l (in meters).
+with additional columns:
+\code{dng}: Distance to nearest green space (tree canopy pixel) in meters,
+measured along the street network when \code{network} is supplied; and
+\code{dng_method}: either \code{"network"} or \code{"euclidean"}, recording
+how each value was obtained. Buildings that cannot reach any green space
+through the network fall back to straight-line distance and are flagged
+\code{"euclidean"}.
 }
 \description{
 \code{get_morphology}: Computes a set of morphological properties and geometric descriptors for each building footprint polygon.
@@ -225,19 +221,15 @@ If \code{x} contains a \code{group_id} column, features with the same \code{grou
 treated as one building for morphology metrics while the returned rows and
 geometries remain unchanged.
 
-\code{get_pop_density}: Downloads and extracts population density data from the GHSL
-(Global Human Settlement Layer) dataset for a specified year, and assigns
-population density values to each input building polygon based on its
-centroid location.
-
-\code{get_residential}: Estimate residential and non-residential building based on
-Global Human Settlement Layer (GHSL) built-up surface data
-
 \code{get_neighbors}: Computes the number of neighboring buildings and centroid
 distance summaries, based on a fixed-radius buffer and
 Voronoi-based adjacency.
 
-\code{get_bgvi}: Calculate the Building Green View Index (BGVI) for each building volume
+\code{get_bgvi}: Calculate the Building Green View Index (BGVI) for each building volume.
+Neighboring buildings in the internal DSM used for the viewshed are given a
+single flat roof elevation (base ground elevation at their centroid, plus
+height) rather than following the terrain slope pixel by pixel, matching
+\code{\link[=get_fused_dsm]{get_fused_dsm()}}.
 
 \code{get_dng}: Calculate the distance to the nearest greenspace (DNG) patch
 for each building volume
@@ -279,12 +271,6 @@ data(globfp_example)
 globfp_example <- sf::st_as_sfc(globfp_example)
 result <- gloBFPr::get_morphology(globfp_example[c(1:3),])
 
-result <- gloBFPr::get_pop_density(# globfp_example[c(1:3),],
-                                   year = 2025)
-
-
-result <- gloBFPr::get_residential(globfp_example[c(1:3),])
-
 result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
 \donttest{
 result <- gloBFPr::get_bgvi(globfp_example[c(1:3),],
@@ -296,6 +282,12 @@ result <- gloBFPr::get_bgvi(globfp_example[c(1:3),],
 result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
                            datasource = "metachm",
                            unit = "m2")
+
+# Measure along real road and path centre lines instead
+result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
+                           datasource = "metachm",
+                           unit = "m2",
+                           network = "osm")
 }
 \references{
 Anna Labetski, Stelios Vitalis, Filip Biljecki, Ken Arroyo Ohori &

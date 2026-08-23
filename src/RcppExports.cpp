@@ -10,6 +10,20 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// allocate_population_cpp
+NumericVector allocate_population_cpp(NumericVector pop_total, IntegerVector cell_group, NumericVector volume, NumericVector area);
+RcppExport SEXP _gloBFPr_allocate_population_cpp(SEXP pop_totalSEXP, SEXP cell_groupSEXP, SEXP volumeSEXP, SEXP areaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type pop_total(pop_totalSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type cell_group(cell_groupSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type volume(volumeSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type area(areaSEXP);
+    rcpp_result_gen = Rcpp::wrap(allocate_population_cpp(pop_total, cell_group, volume, area));
+    return rcpp_result_gen;
+END_RCPP
+}
 // mean_pairwise_distance
 double mean_pairwise_distance(Rcpp::NumericMatrix coords);
 RcppExport SEXP _gloBFPr_mean_pairwise_distance(SEXP coordsSEXP) {
@@ -18,6 +32,19 @@ BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type coords(coordsSEXP);
     rcpp_result_gen = Rcpp::wrap(mean_pairwise_distance(coords));
+    return rcpp_result_gen;
+END_RCPP
+}
+// nearest_green_cpp
+NumericVector nearest_green_cpp(NumericMatrix centroids, NumericMatrix green_xy, double radius);
+RcppExport SEXP _gloBFPr_nearest_green_cpp(SEXP centroidsSEXP, SEXP green_xySEXP, SEXP radiusSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type centroids(centroidsSEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type green_xy(green_xySEXP);
+    Rcpp::traits::input_parameter< double >::type radius(radiusSEXP);
+    rcpp_result_gen = Rcpp::wrap(nearest_green_cpp(centroids, green_xy, radius));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -59,11 +86,37 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// svf_cpp
+NumericVector svf_cpp(NumericMatrix xy, NumericVector azimuth, List rings, IntegerVector ring_building, NumericVector building_height, NumericVector building_ground, NumericMatrix canopy_xy, NumericVector canopy_height, NumericVector canopy_ground, NumericVector observer_ground, NumericVector observer_height, double canopy_cell_size, double max_distance);
+RcppExport SEXP _gloBFPr_svf_cpp(SEXP xySEXP, SEXP azimuthSEXP, SEXP ringsSEXP, SEXP ring_buildingSEXP, SEXP building_heightSEXP, SEXP building_groundSEXP, SEXP canopy_xySEXP, SEXP canopy_heightSEXP, SEXP canopy_groundSEXP, SEXP observer_groundSEXP, SEXP observer_heightSEXP, SEXP canopy_cell_sizeSEXP, SEXP max_distanceSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type xy(xySEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type azimuth(azimuthSEXP);
+    Rcpp::traits::input_parameter< List >::type rings(ringsSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ring_building(ring_buildingSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type building_height(building_heightSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type building_ground(building_groundSEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type canopy_xy(canopy_xySEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type canopy_height(canopy_heightSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type canopy_ground(canopy_groundSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type observer_ground(observer_groundSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type observer_height(observer_heightSEXP);
+    Rcpp::traits::input_parameter< double >::type canopy_cell_size(canopy_cell_sizeSEXP);
+    Rcpp::traits::input_parameter< double >::type max_distance(max_distanceSEXP);
+    rcpp_result_gen = Rcpp::wrap(svf_cpp(xy, azimuth, rings, ring_building, building_height, building_ground, canopy_xy, canopy_height, canopy_ground, observer_ground, observer_height, canopy_cell_size, max_distance));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_gloBFPr_allocate_population_cpp", (DL_FUNC) &_gloBFPr_allocate_population_cpp, 4},
     {"_gloBFPr_mean_pairwise_distance", (DL_FUNC) &_gloBFPr_mean_pairwise_distance, 1},
+    {"_gloBFPr_nearest_green_cpp", (DL_FUNC) &_gloBFPr_nearest_green_cpp, 3},
     {"_gloBFPr_building_shadow_height_cpp", (DL_FUNC) &_gloBFPr_building_shadow_height_cpp, 9},
     {"_gloBFPr_canopy_shadow_height_cpp", (DL_FUNC) &_gloBFPr_canopy_shadow_height_cpp, 9},
+    {"_gloBFPr_svf_cpp", (DL_FUNC) &_gloBFPr_svf_cpp, 13},
     {NULL, NULL, 0}
 };
 

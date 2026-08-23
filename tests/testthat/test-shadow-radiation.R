@@ -64,6 +64,37 @@ testthat::test_that("solar time uses time zone and takes precedence", {
   )
 })
 
+testthat::test_that("svf returns a raster with lower values near buildings", {
+  building <- sf::st_sf(
+    Height = 20,
+    geometry = sf::st_sfc(sf::st_polygon(list(matrix(
+      c(0, 0,
+        0, 10,
+        10, 10,
+        10, 0,
+        0, 0),
+      ncol = 2,
+      byrow = TRUE
+    ))), crs = 3857)
+  )
+
+  result <- gloBFPr::svf(
+    building,
+    grid_res = 10,
+    extent_buffer = 30,
+    res_angle = 45,
+    max_distance = 60,
+    quiet = TRUE
+  )
+
+  testthat::expect_s4_class(result, "SpatRaster")
+  vals <- terra::values(result, mat = FALSE)
+  testthat::expect_true(all(vals[!is.na(vals)] >= 0 & vals[!is.na(vals)] <= 1))
+  near <- terra::extract(result, matrix(c(15, 5), ncol = 2))[, 1]
+  far <- terra::extract(result, matrix(c(35, 25), ncol = 2))[, 1]
+  testthat::expect_lt(near, far)
+})
+
 testthat::test_that("get_shadow_height accepts deprecated location alias", {
   building <- sf::st_sf(
     Height = 10,
@@ -355,11 +386,61 @@ testthat::test_that("get_radiation can plot and still returns sf", {
     solar_diffuse = 100,
     grid_res = 10,
     plot = TRUE,
+    plot_3d = TRUE,
     quiet = TRUE
   )
 
   testthat::expect_s3_class(result, "sf")
   testthat::expect_true(all(c("direct", "diffuse", "total") %in% names(result)))
+  projection <- getFromNamespace("project_radiation_3d", "gloBFPr")(
+    sf::st_coordinates(result)[, "X"],
+    sf::st_coordinates(result)[, "Y"],
+    result$z
+  )
+  testthat::expect_equal(length(projection$x), nrow(result))
+})
+
+testthat::test_that("get_radiation computes diffuse radiation from surface SVF", {
+  buildings <- sf::st_sf(
+    Height = c(20, 8),
+    geometry = sf::st_sfc(
+      sf::st_polygon(list(matrix(
+        c(0, 0,
+          0, 20,
+          20, 20,
+          20, 0,
+          0, 0),
+        ncol = 2,
+        byrow = TRUE
+      ))),
+      sf::st_polygon(list(matrix(
+        c(35, 0,
+          35, 15,
+          50, 15,
+          50, 0,
+          35, 0),
+        ncol = 2,
+        byrow = TRUE
+      )))
+    ),
+    crs = 3857
+  )
+
+  result <- gloBFPr::get_radiation(
+    buildings,
+    azimuth = 225,
+    elevation = 45,
+    solar_normal = 850,
+    solar_diffuse = 120,
+    grid_res = 10,
+    svf_res_angle = 45,
+    quiet = TRUE
+  )
+
+  testthat::expect_true(all(result$svf >= 0 & result$svf <= 1))
+  testthat::expect_gt(length(unique(round(result$svf, 4))), 2)
+  testthat::expect_gt(length(unique(round(result$diffuse, 4))), 2)
+  testthat::expect_equal(result$diffuse, result$svf * 120, tolerance = 1e-8)
 })
 
 testthat::test_that("shadow footprints include canopy obstacles", {
@@ -527,4 +608,91 @@ testthat::test_that("dsmSearch bounding boxes are normalized to EPSG:4326", {
     as_wgs84_bbox_vector(c(276000, 4683000, 277000, 4684000)),
     "EPSG:4326"
   )
+})
+
+testthat::test_that("facade normals point outward for both CW and CCW polygons", {
+  facade_grid_sf <- getFromNamespace("facade_grid_sf", "gloBFPr")
+
+  make_building <- function(coords) {
+    sf::st_sf(
+      Height = 10,
+      geometry = sf::st_sfc(
+        sf::st_polygon(list(matrix(coords, ncol = 2, byrow = TRUE))),
+        crs = 3857
+      )
+    )
+  }
+
+  # CCW exterior ring (positive signed area, GeoJSON/OGC standard)
+  b_ccw <- make_building(c(
+    0, 0,
+    10, 0,
+    10, 10,
+    0, 10,
+    0, 0
+  ))
+  # CW exterior ring (negative signed area, Shapefile/legacy convention)
+  b_cw <- make_building(c(
+    0, 0,
+    0, 10,
+    10, 10,
+    10, 0,
+    0, 0
+  ))
+
+  for (b in list(b_ccw, b_cw)) {
+    grid <- facade_grid_sf(b, "Height", grid_res = 5, offset = 0.01)
+    # All facade normals must be unit vectors in XY plane (nz = 0)
+    norms <- sqrt(grid$nx^2 + grid$ny^2)
+    testthat::expect_true(all(abs(norms - 1) < 1e-9))
+    # Each normal must point AWAY from the building centroid
+    centroid <- sf::st_coordinates(sf::st_centroid(sf::st_geometry(b)))
+    pts <- sf::st_coordinates(grid)
+    outward <- (pts[, "X"] - centroid[, "X"]) * grid$nx +
+               (pts[, "Y"] - centroid[, "Y"]) * grid$ny
+    testthat::expect_true(all(outward > 0),
+      info = paste("Some facade normals point inward for",
+                   if (identical(b, b_ccw)) "CCW" else "CW", "polygon"))
+  }
+})
+
+testthat::test_that("sun-facing facades receive positive direct radiation", {
+  # East-facing facade should receive direct radiation when sun is in the east.
+  # Uses a CCW and a CW building to catch orientation-dependent normal bugs.
+  make_building <- function(coords) {
+    sf::st_sf(
+      Height = 10,
+      geometry = sf::st_sfc(
+        sf::st_polygon(list(matrix(coords, ncol = 2, byrow = TRUE))),
+        crs = 3857
+      )
+    )
+  }
+
+  b_ccw <- make_building(c(0, 0, 10, 0, 10, 10, 0, 10, 0, 0))
+  b_cw  <- make_building(c(0, 0, 0, 10, 10, 10, 10, 0, 0, 0))
+
+  for (b in list(b_ccw, b_cw)) {
+    result <- gloBFPr::get_radiation(
+      b,
+      azimuth = 90,
+      elevation = 45,
+      solar_normal = 800,
+      solar_diffuse = 0,
+      grid_res = 5,
+      quiet = TRUE
+    )
+    facade <- result[result$surface == "facade", ]
+    # East-facing facades (nx > 0.5) should have positive direct radiation
+    east_facing <- facade[facade$nx > 0.5, ]
+    testthat::expect_true(
+      nrow(east_facing) > 0,
+      info = "No east-facing facade points found"
+    )
+    testthat::expect_true(
+      any(east_facing$direct > 0),
+      info = paste("East-facing facades have zero direct radiation for",
+                   if (identical(b, b_ccw)) "CCW" else "CW", "polygon")
+    )
+  }
 })

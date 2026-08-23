@@ -205,7 +205,7 @@ infer_osm_traffic <- function(roads,
 #' from OSM using the building extent. Set to `FALSE` only when a later workflow
 #' step supplies roads, for example `get_noise_map(osm_file = ...)`.
 #' @param population Logical. If `TRUE`, assign GHSL population to buildings
-#' with [get_pop_density()] (or `get_pop()` when available) before writing
+#' with the package population helper (or `get_pop()` when available) before writing
 #' NoiseModelling `BUILDINGS`. Existing `POP`
 #' or `population_field` values are used when available.
 #' @param population_field Optional column containing building population. The
@@ -1210,6 +1210,20 @@ noise_band_labels <- function(lower, upper) {
 #' opaque.
 #' @param road_lwd Road overlay line width.
 #' @param building_col Building fill color. Use `NA` to omit buildings.
+#' @param legend Logical. Draw the dB(A) class legend in a dedicated panel to
+#' the right of the map. Defaults to `TRUE`.
+#' @param legend_width Width of the legend panel relative to the map panel.
+#' Smaller values give the map more room. Defaults to `0.26`.
+#' @param legend_cex Legend text size. Defaults to `0.85`.
+#' @param scalebar Logical. Draw a distance scale bar just below the legend
+#' (or in the bottom-left of the map when `legend = FALSE`). Defaults to
+#' `FALSE`. Distances assume a projected CRS in metres; for geographic
+#' coordinates they are approximated at the map's mid-latitude.
+#' @param scalebar_unit Scale bar unit: `"km"` (default), `"m"`, or `"auto"`
+#' to pick whichever keeps the label readable.
+#' @param scalebar_cex Scale bar label size. Defaults to `0.7`.
+#' @param mar Margins (in lines) around the map panel. Defaults to a tight
+#' margin so the map fills the device.
 #' @param add Logical. If `TRUE`, add to the current plot.
 #' @param ... Additional arguments passed to `plot()`.
 #'
@@ -1227,8 +1241,16 @@ plot_noise_map <- function(x,
                            road_alpha = 0.35,
                            road_lwd = 1.4,
                            building_col = "black",
+                           legend = TRUE,
+                           legend_width = 0.26,
+                           legend_cex = 0.85,
+                           scalebar = FALSE,
+                           scalebar_unit = c("km", "m", "auto"),
+                           scalebar_cex = 0.7,
+                           mar = c(0.2, 0.2, 0.2, 0.2),
                            add = FALSE,
                            ...) {
+  scalebar_unit <- match.arg(scalebar_unit)
   inputs <- if (is.list(x) && !is.null(x$inputs)) x$inputs else NULL
   if (is.list(x) && !is.null(x$isophones) && inherits(x$isophones, "sf") && nrow(x$isophones) > 0) {
     plot_noise_isophones_layers(
@@ -1239,6 +1261,13 @@ plot_noise_map <- function(x,
       road_alpha = road_alpha,
       road_lwd = road_lwd,
       building_col = building_col,
+      legend = legend,
+      legend_width = legend_width,
+      legend_cex = legend_cex,
+      scalebar = scalebar,
+      scalebar_unit = scalebar_unit,
+      scalebar_cex = scalebar_cex,
+      mar = mar,
       add = add,
       ...
     )
@@ -1273,6 +1302,13 @@ plot_noise_map <- function(x,
     road_alpha = road_alpha,
     road_lwd = road_lwd,
     building_col = building_col,
+    legend = legend,
+    legend_width = legend_width,
+    legend_cex = legend_cex,
+    scalebar = scalebar,
+    scalebar_unit = scalebar_unit,
+    scalebar_cex = scalebar_cex,
+    mar = mar,
     add = add,
     ...
   )
@@ -1289,6 +1325,196 @@ noise_map_palette <- function() {
 }
 
 #' @noRd
+noise_legend_labels <- function(labels) {
+  labels <- sub("\\s*dB\\s*\\(A\\)\\s*$", "", labels)
+  trimws(labels)
+}
+
+#' @noRd
+noise_bbox_aspect <- function(geometry) {
+  bb <- try(sf::st_bbox(geometry), silent = TRUE)
+  if (inherits(bb, "try-error")) return(NULL)
+  w <- as.numeric(bb[["xmax"]] - bb[["xmin"]])
+  h <- as.numeric(bb[["ymax"]] - bb[["ymin"]])
+  if (!is.finite(w) || !is.finite(h) || w <= 0 || h <= 0) return(NULL)
+  w / h
+}
+
+#' @noRd
+noise_map_open_layout <- function(legend = TRUE,
+                                  legend_width = 0.26,
+                                  mar = c(0.2, 0.2, 0.2, 0.2),
+                                  asp_ratio = NULL) {
+  old_par <- graphics::par(no.readonly = TRUE)
+  if (isTRUE(legend)) {
+    din <- graphics::par("din")
+    line_in <- graphics::par("csi")
+    legend_in <- min(max(legend_width, 0.05) * din[1], din[1] * 0.6)
+    map_in <- din[1] - legend_in
+    if (!is.null(asp_ratio) && is.finite(asp_ratio) && asp_ratio > 0) {
+      # With asp = 1 the map is usually height-limited, so give the map panel
+      # only the width it can actually fill and hand the slack to the legend.
+      map_h <- din[2] - (mar[1] + mar[3]) * line_in
+      needed <- map_h * asp_ratio + (mar[2] + mar[4]) * line_in
+      map_in <- min(map_in, max(needed, din[1] * 0.3))
+    }
+    graphics::layout(
+      matrix(c(1L, 2L), nrow = 1L),
+      widths = c(map_in, max(din[1] - map_in, din[1] * 0.05))
+    )
+  }
+  graphics::par(mar = mar)
+  old_par
+}
+
+#' @noRd
+noise_map_close_layout <- function(old_par, legend = TRUE) {
+  if (isTRUE(legend)) {
+    graphics::layout(1L)
+  }
+  suppressWarnings(graphics::par(old_par))
+  invisible(NULL)
+}
+
+#' @noRd
+noise_map_scale <- function(geometry = NULL) {
+  usr <- graphics::par("usr")
+  pin <- graphics::par("pin")
+  span <- usr[2] - usr[1]
+  if (!is.finite(span) || span <= 0 || !is.finite(pin[1]) || pin[1] <= 0) {
+    return(NULL)
+  }
+  metres_per_inch <- span / pin[1]
+  longlat <- FALSE
+  if (!is.null(geometry)) {
+    ll <- suppressWarnings(try(sf::st_is_longlat(geometry), silent = TRUE))
+    longlat <- isTRUE(!inherits(ll, "try-error") && isTRUE(ll))
+  }
+  if (longlat) {
+    # Degrees of longitude shrink with latitude; scale at the map's mid-latitude.
+    mid_lat <- (usr[3] + usr[4]) / 2
+    metres_per_inch <- metres_per_inch * 111320 * cos(mid_lat * pi / 180)
+  }
+  if (!is.finite(metres_per_inch) || metres_per_inch <= 0) {
+    return(NULL)
+  }
+  metres_per_inch
+}
+
+#' @noRd
+noise_scalebar_nice <- function(x) {
+  if (!is.finite(x) || x <= 0) return(NA_real_)
+  pow <- 10^floor(log10(x))
+  frac <- x / pow
+  nice <- if (frac >= 5) 5 else if (frac >= 2.5) 2.5 else if (frac >= 2) 2 else 1
+  nice * pow
+}
+
+#' @noRd
+noise_map_draw_scalebar <- function(metres_per_inch,
+                                    x_in,
+                                    y_in,
+                                    max_width_in,
+                                    unit = "km",
+                                    cex = 0.7,
+                                    col = "#333333") {
+  if (is.null(metres_per_inch) || !is.finite(metres_per_inch) || metres_per_inch <= 0) {
+    return(invisible(NULL))
+  }
+  if (!is.finite(max_width_in) || max_width_in <= 0.2) {
+    return(invisible(NULL))
+  }
+  metres <- noise_scalebar_nice(max_width_in * 0.9 * metres_per_inch)
+  if (!is.finite(metres) || metres <= 0) return(invisible(NULL))
+  if (identical(unit, "auto")) unit <- if (metres >= 1000) "km" else "m"
+  divisor <- if (identical(unit, "km")) 1000 else 1
+  value <- metres / divisor
+  bar_in <- metres / metres_per_inch
+  height_in <- 0.07
+  x0 <- graphics::grconvertX(x_in, "inches", "user")
+  xm <- graphics::grconvertX(x_in + bar_in / 2, "inches", "user")
+  x1 <- graphics::grconvertX(x_in + bar_in, "inches", "user")
+  y0 <- graphics::grconvertY(y_in, "inches", "user")
+  y1 <- graphics::grconvertY(y_in + height_in, "inches", "user")
+  graphics::rect(x0, y0, xm, y1, col = col, border = col, xpd = NA)
+  graphics::rect(xm, y0, x1, y1, col = "white", border = col, xpd = NA)
+  label <- paste(format(value, trim = TRUE, scientific = FALSE), unit)
+  graphics::text(x0, y0, "0", adj = c(0.5, 1.35), cex = cex, col = col, xpd = NA)
+  graphics::text(x1, y0, label, adj = c(0.5, 1.35), cex = cex, col = col, xpd = NA)
+  invisible(list(metres = metres, unit = unit, width_in = bar_in))
+}
+
+#' @noRd
+noise_map_scalebar_below_legend <- function(metres_per_inch,
+                                            legend_info,
+                                            unit = "km",
+                                            cex = 0.7) {
+  if (is.null(metres_per_inch)) return(invisible(NULL))
+  rect <- if (is.list(legend_info)) legend_info$rect else NULL
+  if (is.null(rect)) return(invisible(NULL))
+  left_in <- graphics::grconvertX(rect$left, "user", "inches")
+  bottom_in <- graphics::grconvertY(rect$top - rect$h, "user", "inches") - 0.3
+  right_in <- graphics::grconvertX(1, "npc", "inches")
+  legend_w_in <- graphics::grconvertX(rect$left + rect$w, "user", "inches") - left_in
+  # Keep the bar roughly as wide as the legend box rather than the whole panel.
+  max_width_in <- min(right_in - left_in, max(legend_w_in, 1))
+  noise_map_draw_scalebar(
+    metres_per_inch,
+    x_in = left_in,
+    y_in = bottom_in,
+    max_width_in = max_width_in,
+    unit = unit,
+    cex = cex
+  )
+}
+
+#' @noRd
+noise_map_scalebar_in_map <- function(metres_per_inch, unit = "km", cex = 0.7) {
+  if (is.null(metres_per_inch)) return(invisible(NULL))
+  pin <- graphics::par("pin")
+  left_in <- graphics::grconvertX(0.04, "npc", "inches")
+  bottom_in <- graphics::grconvertY(0.08, "npc", "inches")
+  noise_map_draw_scalebar(
+    metres_per_inch,
+    x_in = left_in,
+    y_in = bottom_in,
+    max_width_in = pin[1] * 0.3,
+    unit = unit,
+    cex = cex
+  )
+}
+
+#' @noRd
+noise_map_draw_legend <- function(labels,
+                                  fills,
+                                  title = "LAeq dB(A)",
+                                  cex = 0.85,
+                                  mar = c(0.2, 0.2, 0.2, 0.2),
+                                  reserve_in = 0) {
+  graphics::par(mar = c(mar[1], max(mar[2], 0.8), mar[3], 0.2))
+  graphics::plot.new()
+  pin <- graphics::par("pin")
+  # Nudge the legend up so legend + scale bar stay centred on the map.
+  y_centre <- if (reserve_in > 0 && pin[2] > 0) 0.5 + (reserve_in / 2) / pin[2] else 0.5
+  info <- graphics::legend(
+    x = 0,
+    y = y_centre,
+    yjust = 0.5,
+    xjust = 0,
+    legend = noise_legend_labels(labels),
+    fill = fills,
+    border = NA,
+    bty = "n",
+    title = title,
+    title.adj = 0,
+    cex = cex,
+    y.intersp = 1.15,
+    xpd = NA
+  )
+  invisible(info)
+}
+
+#' @noRd
 plot_noise_surface_layers <- function(surface,
                                       inputs = NULL,
                                       palette = noise_map_palette(),
@@ -1296,6 +1522,13 @@ plot_noise_surface_layers <- function(surface,
                                       road_alpha = 0.35,
                                       road_lwd = 1.4,
                                       building_col = "black",
+                                      legend = TRUE,
+                                      legend_width = 0.26,
+                                      legend_cex = 0.85,
+                                      scalebar = FALSE,
+                                      scalebar_unit = "km",
+                                      scalebar_cex = 0.7,
+                                      mar = c(0.2, 0.2, 0.2, 0.2),
                                       add = FALSE,
                                       ...) {
   bands <- surface$bands
@@ -1304,9 +1537,14 @@ plot_noise_surface_layers <- function(surface,
   }
   class_values <- bands$noise_class
   fill <- palette[pmin(pmax(class_values, 1), length(palette))]
-  old_par <- graphics::par(no.readonly = TRUE)
-  on.exit(graphics::par(old_par), add = TRUE)
   if (!isTRUE(add)) {
+    old_par <- noise_map_open_layout(
+      legend = legend,
+      legend_width = legend_width,
+      mar = mar,
+      asp_ratio = noise_bbox_aspect(bands)
+    )
+    on.exit(noise_map_close_layout(old_par, legend = legend), add = TRUE)
     graphics::plot(sf::st_geometry(bands), col = fill, border = NA, asp = 1, ...)
   } else {
     graphics::plot(sf::st_geometry(bands), col = fill, border = NA, add = TRUE, ...)
@@ -1327,18 +1565,31 @@ plot_noise_surface_layers <- function(surface,
       add = TRUE
     )
   }
+  map_scale <- if (isTRUE(scalebar)) noise_map_scale(bands) else NULL
+  if (!isTRUE(legend) || isTRUE(add)) {
+    if (isTRUE(scalebar)) {
+      noise_map_scalebar_in_map(map_scale, unit = scalebar_unit, cex = scalebar_cex)
+    }
+    return(invisible(NULL))
+  }
   legend_labels <- unique(bands$label[order(bands$noise_class)])
   legend_classes <- unique(bands$noise_class[order(bands$noise_class)])
-  graphics::legend(
-    "right",
-    legend = legend_labels,
-    fill = palette[pmin(pmax(legend_classes, 1), length(palette))],
-    border = NA,
-    bty = "n",
-    title = "LAeq dB(A)",
-    cex = 0.85,
-    y.intersp = 1.15
+  legend_info <- noise_map_draw_legend(
+    labels = legend_labels,
+    fills = palette[pmin(pmax(legend_classes, 1), length(palette))],
+    cex = legend_cex,
+    mar = mar,
+    reserve_in = if (isTRUE(scalebar)) 0.5 else 0
   )
+  if (isTRUE(scalebar)) {
+    noise_map_scalebar_below_legend(
+      map_scale,
+      legend_info,
+      unit = scalebar_unit,
+      cex = scalebar_cex
+    )
+  }
+  invisible(NULL)
 }
 
 #' @noRd
@@ -1349,13 +1600,25 @@ plot_noise_isophones_layers <- function(isophones,
                                         road_alpha = 0.35,
                                         road_lwd = 1.4,
                                         building_col = "black",
+                                        legend = TRUE,
+                                        legend_width = 0.26,
+                                        legend_cex = 0.85,
+                                        scalebar = FALSE,
+                                        scalebar_unit = "km",
+                                        scalebar_cex = 0.7,
+                                        mar = c(0.2, 0.2, 0.2, 0.2),
                                         add = FALSE,
                                         ...) {
   class_values <- isophone_class_values(isophones)
   fill <- palette[pmin(pmax(class_values, 1), length(palette))]
-  old_par <- graphics::par(no.readonly = TRUE)
-  on.exit(graphics::par(old_par), add = TRUE)
   if (!isTRUE(add)) {
+    old_par <- noise_map_open_layout(
+      legend = legend,
+      legend_width = legend_width,
+      mar = mar,
+      asp_ratio = noise_bbox_aspect(isophones)
+    )
+    on.exit(noise_map_close_layout(old_par, legend = legend), add = TRUE)
     graphics::plot(sf::st_geometry(isophones), col = fill, border = NA, asp = 1, ...)
   } else {
     graphics::plot(sf::st_geometry(isophones), col = fill, border = NA, add = TRUE, ...)
@@ -1376,19 +1639,32 @@ plot_noise_isophones_layers <- function(isophones,
       add = TRUE
     )
   }
+  map_scale <- if (isTRUE(scalebar)) noise_map_scale(isophones) else NULL
+  if (!isTRUE(legend) || isTRUE(add)) {
+    if (isTRUE(scalebar)) {
+      noise_map_scalebar_in_map(map_scale, unit = scalebar_unit, cex = scalebar_cex)
+    }
+    return(invisible(NULL))
+  }
   legend_info <- isophone_legend_info(isophones, class_values)
   legend_classes <- legend_info$class
   legend_labels <- legend_info$label
-  graphics::legend(
-    "right",
-    legend = legend_labels,
-    fill = palette[pmin(pmax(legend_classes, 1), length(palette))],
-    border = NA,
-    bty = "n",
-    title = "LAeq dB(A)",
-    cex = 0.85,
-    y.intersp = 1.15
+  legend_box <- noise_map_draw_legend(
+    labels = legend_labels,
+    fills = palette[pmin(pmax(legend_classes, 1), length(palette))],
+    cex = legend_cex,
+    mar = mar,
+    reserve_in = if (isTRUE(scalebar)) 0.5 else 0
   )
+  if (isTRUE(scalebar)) {
+    noise_map_scalebar_below_legend(
+      map_scale,
+      legend_box,
+      unit = scalebar_unit,
+      cex = scalebar_cex
+    )
+  }
+  invisible(NULL)
 }
 
 #' @noRd
@@ -1853,6 +2129,9 @@ run_wps_script <- function(wps, work_dir, db_name, script, script_args, java = N
 }
 #' @noRd
 fetch_greenspace_tile <- function(...) {
+  if (!requireNamespace("greenSD", quietly = TRUE)) {
+    stop("Package 'greenSD' is required for this function. Install it with: install.packages('greenSD')", call. = FALSE)
+  }
   tryCatch(
     greenSD::get_tile_green(...),
     error = function(e) {

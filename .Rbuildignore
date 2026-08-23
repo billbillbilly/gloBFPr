@@ -10,3 +10,11 @@
 ^.*\.Rhistory$
 ^\.positai$
 ^\.claude$
+^_pkgdown\.yml$
+^pkgdown$
+^dev$
+^demo$
+^.*\.DS_Store$
+^NEWS.md$
+^gloBFPr_talk.pptx$
+^pkgdown$

@@ -1,3 +1,4 @@
+#' @importFrom igraph make_empty_graph add_edges components
 #' @importFrom terra ext
 #' @importFrom terra vect
 #' @importFrom terra rast
@@ -9,7 +10,6 @@
 #' @importFrom sf st_transform
 #' @importFrom sf st_crs st_convex_hull
 #' @importFrom sf st_as_sfc st_multipoint
-#' @importFrom viewscape compute_viewshed calculate_feature
 
 #### Footprint data processing ####
 #' @noRd
@@ -58,32 +58,26 @@ assign_building_group_id <- function(x) {
     return(x)
   }
 
-  neighbors <- sf::st_intersects(x, sparse = TRUE)
-  group_id <- rep(NA_integer_, nrow(x))
-  current_group <- 0L
+  # Use interior-intersection only (DE-9IM "T********") so buildings that merely
+  # share a wall or boundary point are NOT grouped together. Only genuinely
+  # overlapping polygons (fragmented representations of the same building) form
+  # a group.
+  neighbors <- sf::st_relate(x, x, pattern = "T********", sparse = TRUE)
 
-  for (i in seq_len(nrow(x))) {
-    if (!is.na(group_id[i])) {
-      next
-    }
-    current_group <- current_group + 1L
-    queue <- i
-    group_id[i] <- current_group
+  # Build upper-triangle edge list and find connected components via igraph,
+  # which is much faster than an R-level BFS loop for large datasets.
+  edges <- do.call(rbind, lapply(seq_along(neighbors), function(i) {
+    j <- neighbors[[i]]
+    j <- j[j > i]
+    if (length(j) == 0) return(NULL)
+    cbind(i, j)
+  }))
 
-    while (length(queue) > 0) {
-      node <- queue[1]
-      queue <- queue[-1]
-      adjacent <- neighbors[[node]]
-      adjacent <- adjacent[is.na(group_id[adjacent])]
-      if (length(adjacent) == 0) {
-        next
-      }
-      group_id[adjacent] <- current_group
-      queue <- c(queue, adjacent)
-    }
+  g <- igraph::make_empty_graph(n = nrow(x), directed = FALSE)
+  if (!is.null(edges)) {
+    g <- igraph::add_edges(g, t(edges))
   }
-
-  x$group_id <- group_id
+  x$group_id <- igraph::components(g)$membership
   x
 }
 
@@ -116,24 +110,45 @@ read_gbf_buildings <- function(bbox, quiet = TRUE) {
 
   workers <- min(max(1, as.numeric(future::availableCores()) - 1), nrow(intersecting))
   os <- Sys.info()[["sysname"]]
-  if (workers == 1) {
-    future::plan(future::sequential)
-  } else if (os == "Windows" || isFALSE(parallelly::supportsMulticore())) {
-    future::plan(future::multisession, workers = workers)
-  } else {
-    future::plan(future::multicore, workers = workers)
-  }
-  on.exit(future::plan(future::sequential), add = TRUE)
 
   bbox_wkt <- sf::st_as_text(sf::st_union(sf::st_geometry(bbox)))
-  result_list <- furrr::future_map(
-    intersecting$download_url,
-    read_gbf_tile,
-    bbox_wkt = bbox_wkt,
-    quiet = quiet,
-    .options = furrr::furrr_options(seed = TRUE),
-    .progress = !quiet
-  )
+
+  if (workers == 1) {
+    # Single tile: run directly instead of through a (sequential) future. This
+    # also avoids future's "added, removed, or modified connections" warning,
+    # which is triggered by connections opened inside download.file()/st_read().
+    result_list <- lapply(
+      intersecting$download_url,
+      read_gbf_tile,
+      bbox_wkt = bbox_wkt,
+      quiet = quiet
+    )
+  } else {
+    # future (>= 1.40) warns when a future expression leaves a connection
+    # behind. Here the connection is created by download.file()/sf::st_read(),
+    # i.e. outside our control, so the check is silenced locally.
+    old_misuse <- getOption("future.connections.onMisuse")
+    options(future.connections.onMisuse = "ignore")
+    on.exit(options(future.connections.onMisuse = old_misuse), add = TRUE)
+
+    # Restore whatever plan the user had, rather than forcing sequential.
+    oplan <- future::plan()
+    on.exit(future::plan(oplan), add = TRUE)
+    if (os == "Windows" || isFALSE(parallelly::supportsMulticore())) {
+      future::plan(future::multisession, workers = workers)
+    } else {
+      future::plan(future::multicore, workers = workers)
+    }
+
+    result_list <- furrr::future_map(
+      intersecting$download_url,
+      read_gbf_tile,
+      bbox_wkt = bbox_wkt,
+      quiet = quiet,
+      .options = furrr::furrr_options(seed = TRUE),
+      .progress = !quiet
+    )
+  }
   result_list <- Filter(Negate(is.null), result_list)
 
   if (length(result_list) == 0) {
@@ -184,6 +199,67 @@ read_gbf_tile <- function(download_url, bbox_wkt, quiet = TRUE) {
 
 #' @noRd
 read_gba_buildings <- function(bbox, quiet = TRUE) {
+  if (!quiet) cli::cli_alert_info("Downloading GlobalBuildingAtlas WFS features ...")
+  all_data <- read_gba_bbox_recursive(bbox, quiet = quiet)
+  if (is.null(all_data) || nrow(all_data) == 0) {
+    return(NULL)
+  }
+  all_data <- normalize_gba_columns(all_data)
+  all_data <- dedupe_gba_features(all_data)
+  keep_cols <- intersect(c("Height", ".source_id", "geometry"), names(all_data))
+  all_data <- all_data[, keep_cols]
+  return(all_data)
+}
+
+#' @noRd
+read_gba_bbox_recursive <- function(bbox, quiet = TRUE, depth = 0L, max_depth = 5L) {
+  if (gba_bbox_needs_split(bbox) && depth < max_depth) {
+    pieces <- lapply(split_bbox_quadrants(bbox), function(tile) {
+      read_gba_bbox_recursive(tile, quiet = quiet, depth = depth + 1L, max_depth = max_depth)
+    })
+    pieces <- Filter(Negate(is.null), pieces)
+    if (length(pieces) == 0) {
+      return(NULL)
+    }
+    return(dplyr::bind_rows(pieces))
+  }
+
+  result <- tryCatch(
+    read_gba_bbox(bbox),
+    error = function(e) e
+  )
+  if (!inherits(result, "error")) {
+    return(result)
+  }
+
+  if (depth >= max_depth) {
+    stop("Failed to read GlobalBuildingAtlas WFS data: ", conditionMessage(result), call. = FALSE)
+  }
+  if (grepl("404|not found", conditionMessage(result), ignore.case = TRUE)) {
+    return(NULL)
+  }
+  if (!quiet) {
+    cli::cli_alert_info("GlobalBuildingAtlas WFS request failed; retrying with smaller bbox tiles ...")
+  }
+
+  pieces <- lapply(split_bbox_quadrants(bbox), function(tile) {
+    tryCatch(
+      read_gba_bbox_recursive(tile, quiet = quiet, depth = depth + 1L, max_depth = max_depth),
+      error = function(e) {
+        if (!quiet) base::message("Failed to read GBA tile: ", conditionMessage(e))
+        NULL
+      }
+    )
+  })
+  pieces <- Filter(Negate(is.null), pieces)
+  if (length(pieces) == 0) {
+    return(NULL)
+  }
+  dplyr::bind_rows(pieces)
+}
+
+#' @noRd
+read_gba_bbox <- function(bbox) {
   bbox_values <- sf::st_bbox(bbox)
   bbox_param <- paste(
     bbox_values[["xmin"]],
@@ -210,13 +286,49 @@ read_gba_buildings <- function(bbox, quiet = TRUE) {
   )
   url <- paste0("https://tubvsig-so2sat-vm1.srv.mwn.de/geoserver/ows?", query)
 
-  if (!quiet) cli::cli_alert_info("Downloading GlobalBuildingAtlas WFS features ...")
-  all_data <- tryCatch({
-    sf::st_read(url, quiet = TRUE)
-  }, error = function(e) {
-    stop("Failed to read GlobalBuildingAtlas WFS data: ", conditionMessage(e), call. = FALSE)
-  })
+  response <- httr2::request(url) |>
+    httr2::req_timeout(20) |>
+    httr2::req_perform()
+  body <- httr2::resp_body_string(response)
+  if (grepl('"features"[[:space:]]*:[[:space:]]*\\[[[:space:]]*\\]', body)) {
+    return(NULL)
+  }
 
+  geojson_file <- tempfile(fileext = ".geojson")
+  on.exit(unlink(geojson_file), add = TRUE)
+  writeLines(body, geojson_file, useBytes = TRUE)
+  sf::st_read(geojson_file, quiet = TRUE)
+}
+
+#' @noRd
+gba_bbox_needs_split <- function(bbox, max_span = 0.01) {
+  bbox_values <- sf::st_bbox(bbox)
+  width <- bbox_values[["xmax"]] - bbox_values[["xmin"]]
+  height <- bbox_values[["ymax"]] - bbox_values[["ymin"]]
+  width > max_span || height > max_span
+}
+
+#' @noRd
+split_bbox_quadrants <- function(bbox) {
+  bbox_values <- sf::st_bbox(bbox)
+  xmid <- mean(c(bbox_values[["xmin"]], bbox_values[["xmax"]]))
+  ymid <- mean(c(bbox_values[["ymin"]], bbox_values[["ymax"]]))
+  boxes <- list(
+    c(bbox_values[["xmin"]], bbox_values[["ymin"]], xmid, ymid),
+    c(xmid, bbox_values[["ymin"]], bbox_values[["xmax"]], ymid),
+    c(bbox_values[["xmin"]], ymid, xmid, bbox_values[["ymax"]]),
+    c(xmid, ymid, bbox_values[["xmax"]], bbox_values[["ymax"]])
+  )
+  lapply(boxes, function(values) {
+    sf::st_as_sfc(sf::st_bbox(
+      c(xmin = values[1], ymin = values[2], xmax = values[3], ymax = values[4]),
+      crs = sf::st_crs(bbox)
+    ))
+  })
+}
+
+#' @noRd
+normalize_gba_columns <- function(all_data) {
   if (nrow(all_data) == 0) {
     return(NULL)
   }
@@ -231,13 +343,35 @@ read_gba_buildings <- function(bbox, quiet = TRUE) {
   if (!"Height" %in% names(all_data)) {
     stop("GlobalBuildingAtlas response is missing the height field.", call. = FALSE)
   }
-
-  keep_cols <- intersect(c("Height", ".source_id", "geometry"), names(all_data))
-  all_data <- all_data[, keep_cols]
-  return(all_data)
+  all_data
 }
 
-#' @noMd
+#' @noRd
+dedupe_gba_features <- function(all_data) {
+  if (is.null(all_data) || nrow(all_data) <= 1) {
+    return(all_data)
+  }
+  if (".source_id" %in% names(all_data)) {
+    source_id <- as.character(all_data$.source_id)
+    has_source_id <- !is.na(source_id) & nzchar(source_id)
+    keep <- rep(TRUE, nrow(all_data))
+    keep[has_source_id] <- !duplicated(source_id[has_source_id])
+    all_data <- all_data[keep, ]
+  }
+  if (nrow(all_data) <= 1) {
+    return(all_data)
+  }
+  # Use digits = 6 (~0.1 m precision) so near-identical polygons from adjacent
+  # GBA tile boundaries are treated as duplicates and removed.
+  exact_key <- paste(
+    as.character(all_data$Height),
+    sf::st_as_text(sf::st_geometry(all_data), digits = 6),
+    sep = "|"
+  )
+  all_data[!duplicated(exact_key), ]
+}
+
+#' @noRd
 rasterize_binary <- function(poly, bbox, res) {
   utm_crs <- get_utm_crs(bbox)
   proj_ <- reproj(bbox, poly, utm_crs, res)
@@ -255,7 +389,7 @@ rasterize_binary <- function(poly, bbox, res) {
   return(binary)
 }
 
-#' @noMd
+#' @noRd
 rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height") {
   if (!height_field %in% names(poly)) {stop("Missing height field in polygon.")}
   utm_crs <- get_utm_crs(bbox)
@@ -281,7 +415,7 @@ rasterize_height <- function(poly, bbox, res, mask=NULL, height_field = "Height"
 
 #### Metrics calculation ####
 
-#' @noMd
+#' @noRd
 prepare_group_analysis_buildings <- function(x) {
   if (!"group_id" %in% names(x)) {
     return(x)
@@ -304,7 +438,7 @@ prepare_group_analysis_buildings <- function(x) {
   units
 }
 
-#' @noMd
+#' @noRd
 copy_group_results <- function(target, grouped, cols) {
   cols <- intersect(cols, names(grouped))
   if (length(cols) == 0) {
@@ -323,7 +457,7 @@ copy_group_results <- function(target, grouped, cols) {
   target
 }
 
-#' @noMd
+#' @noRd
 prepare_morphology_units <- function(x) {
   if (!"group_id" %in% names(x)) {
     return(x)
@@ -354,7 +488,7 @@ prepare_morphology_units <- function(x) {
   units
 }
 
-#' @noMd
+#' @noRd
 morphology_group_properties <- function(idx, x) {
   parts <- x[idx, ]
   part_area <- as.numeric(sf::st_area(parts))
@@ -377,7 +511,7 @@ morphology_group_properties <- function(idx, x) {
   )
 }
 
-#' @noMd
+#' @noRd
 group_vertical_surface <- function(parts, part_perimeter, part_height) {
   v_surf <- sum(part_perimeter * part_height, na.rm = TRUE)
   if (nrow(parts) <= 1) {
@@ -404,7 +538,7 @@ group_vertical_surface <- function(parts, part_perimeter, part_height) {
   v_surf
 }
 
-#' @noMd
+#' @noRd
 get_morphology_property <- function(x, name) {
   detail_name <- paste0(".", name)
   if (detail_name %in% names(x)) {
@@ -422,7 +556,7 @@ get_morphology_property <- function(x, name) {
   )
 }
 
-#' @noMd
+#' @noRd
 cal_hemisphericality <- function(poly_) {
   # minimum_area_rectangle <- sf::st_minimum_rotated_rectangle(poly)
   # coords_2d <- sf::st_coordinates(minimum_area_rectangle)
@@ -448,7 +582,7 @@ cal_hemisphericality <- function(poly_) {
   return(hemisphericality)
 }
 
-#' @noMd
+#' @noRd
 cal_convexity <- function(poly_) {
   vertices <- sf::st_coordinates(poly_)[, 1:2]
   multipoint <- sf::st_multipoint(vertices)
@@ -457,7 +591,7 @@ cal_convexity <- function(poly_) {
   return(as.numeric(poly_$g_area / sf::st_area(convex_hull)))
 }
 
-#' @noMd
+#' @noRd
 cal_accessibility <- function(poly_) {
   # create a 3D voxel grid
   filtered_grid <- ploy2grid(poly_)
@@ -473,7 +607,7 @@ cal_accessibility <- function(poly_) {
   return(mean(dists))
 }
 
-#' @noMd
+#' @noRd
 cal_accessibility_group <- function(parts) {
   filtered_grid <- group_ploy2grid(parts)
   if (nrow(filtered_grid) == 0) {
@@ -488,7 +622,7 @@ cal_accessibility_group <- function(parts) {
   mean(dists)
 }
 
-#' @noMd
+#' @noRd
 cal_mean_pairwise_distance <- function(poly_) {
   # create a 3D voxel grid
   filtered_grid <- ploy2grid(poly_)
@@ -498,7 +632,7 @@ cal_mean_pairwise_distance <- function(poly_) {
   return(dist)
 }
 
-#' @noMd
+#' @noRd
 cal_mean_pairwise_distance_group <- function(parts) {
   filtered_grid <- group_ploy2grid(parts)
   if (nrow(filtered_grid) == 0) {
@@ -508,7 +642,7 @@ cal_mean_pairwise_distance_group <- function(parts) {
   mean_pairwise_distance(coords)
 }
 
-#' @noMd
+#' @noRd
 cal_volume_exchange_ratio <- function(poly_) {
   # Get volume of minimum enclosing sphere
   coords <- sf::st_coordinates(sf::st_convex_hull(poly_))[, 1:2]
@@ -521,7 +655,7 @@ cal_volume_exchange_ratio <- function(poly_) {
   return(vol_exch)
 }
 
-#' @noMd
+#' @noRd
 ploy2grid <- function(poly_) {
   height <- as.numeric(poly_$Height[1])
   bbox_ <- sf::st_bbox(poly_)
@@ -538,7 +672,7 @@ ploy2grid <- function(poly_) {
   return(filtered_grid)
 }
 
-#' @noMd
+#' @noRd
 group_ploy2grid <- function(parts) {
   grids <- lapply(seq_len(nrow(parts)), function(i) ploy2grid(parts[i, ]))
   grids <- grids[vapply(grids, nrow, integer(1)) > 0]
@@ -548,7 +682,7 @@ group_ploy2grid <- function(parts) {
   unique(do.call(rbind, grids))
 }
 
-#' @noMd
+#' @noRd
 cal_elongation_ratios <- function(poly_) {
   # Compute minimum bounding rectangle
   min_rect <- sf::st_minimum_rotated_rectangle(poly_)
@@ -569,7 +703,7 @@ cal_elongation_ratios <- function(poly_) {
   return(list(ratio_x, ratio_y, ratio_z))
 }
 
-#' @noMd
+#' @noRd
 directional_green_feature <- function(binary_green, p, direction, field_of_view) {
   direction_bearings <- c(
     north = 0,
@@ -606,8 +740,11 @@ directional_green_feature <- function(binary_green, p, direction, field_of_view)
   out
 }
 
-#' @noMd
+#' @noRd
 gvi_from_viewshed <- function(viewshed, building, binary_green) {
+  if (!requireNamespace("viewscape", quietly = TRUE)) {
+    stop("Package 'viewscape' is required for this function. Install it with: install.packages('viewscape')", call. = FALSE)
+  }
   v_area <- length(as.vector(viewshed@visible[viewshed@visible == 1])) *
     viewshed@resolution[1]^2
   green_proportion <- viewscape::calculate_feature(
@@ -618,39 +755,39 @@ gvi_from_viewshed <- function(viewshed, building, binary_green) {
   )
   green_area <- v_area * green_proportion
   gvi <- green_area / max(v_area - building$g_area, 1e-6)
-  min(gvi, 1)
+  list(gvi = min(gvi, 1), green_area = green_area)
 }
 
-#' @noMd
+#' @noRd
 get_gvi <- function(dsm, p, height, r, building, binary_chm,
                     directions = NULL, field_of_view = 45) {
+  if (!requireNamespace("viewscape", quietly = TRUE)) {
+    stop("Package 'viewscape' is required for this function. Install it with: install.packages('viewscape')", call. = FALSE)
+  }
   tryCatch({
     # Viewshed
     v <- viewscape::compute_viewshed(dsm = dsm, viewpoints = p,
                                      offset_viewpoint = height,
                                      r = r
     )
-    gvi <- gvi_from_viewshed(v, building, binary_chm)
+    result <- gvi_from_viewshed(v, building, binary_chm)
 
     if (inherits(directions, "NULL")) {
-      return(gvi)
+      return(result)
     }
 
-    directional_gvis <- vapply(
-      directions,
-      function(direction) {
-        directional_feature <- directional_green_feature(
-          binary_green = binary_chm,
-          p = p,
-          direction = direction,
-          field_of_view = field_of_view
-        )
-        gvi_from_viewshed(v, building, directional_feature)
-      },
-      numeric(1)
-    )
+    directional_results <- lapply(directions, function(direction) {
+      directional_feature <- directional_green_feature(
+        binary_green = binary_chm,
+        p = p,
+        direction = direction,
+        field_of_view = field_of_view
+      )
+      gvi_from_viewshed(v, building, directional_feature)
+    })
+    names(directional_results) <- directions
 
-    return(c(overall = gvi, directional_gvis))
+    return(c(list(overall = result), directional_results))
   }, error = function(e) {
     stop(sprintf("GVI calculation failed: %s", e$message))
   })
@@ -665,7 +802,7 @@ get_gvi <- function(dsm, p, height, r, building, binary_chm,
 # Still returns 0 if the viewshed fails or has no values
 
 #### Data collection and processing ####
-#' @noMd
+#' @noRd
 download_to_file <- function(url, destfile, quiet = FALSE) {
   tryCatch({
     httr2::request(url) |>
@@ -677,17 +814,15 @@ download_to_file <- function(url, destfile, quiet = FALSE) {
   })
 }
 
-#' @noMd
+#' @noRd
 get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL, polygons = NULL, quiet = FALSE) {
-  # Store the original 'timeout' option and ensure it's reset upon function exit
   original_timeout <- getOption('timeout')
   on.exit(options(timeout = original_timeout), add = TRUE)
   options(timeout=9999)
 
-  # GHS population grid
   years <- c(2030, 2025, 2020, 2015, 2010, 2005, 2000, 1995, 1990, 1985, 1980, 1975)
   result_list <- list()
-  temp_paths <- c()  # store paths for later cleanup
+  temp_paths <- c()
 
   if (!year %in% years) {
     stop(sprintf("Input year %d is not in allowed range. Skipping.", year))
@@ -703,6 +838,7 @@ get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL, polygons = NULL,
   if (!inherits(points, "NULL") || !inherits(polygons, "NULL")) {
     target <- if (!inherits(points, "NULL")) points else polygons
     pop_total <- rep(NA_real_, nrow(target))
+    cell_id <- rep(NA_character_, nrow(target))
 
     for (i in seq_len(nrow(intersected_tiles))) {
       temp_zip <- tempfile(fileext = ".zip")
@@ -718,11 +854,14 @@ get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL, polygons = NULL,
       rast_data <- terra::rast(tif_files[1])
       if (!inherits(points, "NULL")) {
         points_src <- sf::st_transform(points, terra::crs(rast_data))
+        point_xy <- sf::st_coordinates(points_src)
+        point_cells <- terra::cellFromXY(rast_data, point_xy)
         extracted <- suppressWarnings(
           terra::extract(rast_data, terra::vect(points_src), raw = TRUE, ID = FALSE)[, 1]
         )
         matched <- is.na(pop_total) & !is.na(extracted)
         pop_total[matched] <- extracted[matched]
+        cell_id[matched] <- paste(intersected_tiles$tile_id[i], point_cells[matched], sep = ":")
       } else {
         polygons_src <- sf::st_transform(polygons, terra::crs(rast_data))
         extracted <- suppressWarnings(
@@ -756,12 +895,10 @@ get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL, polygons = NULL,
       stop("No population values extracted from downloaded GHSL rasters")
     }
     if (!quiet) cli::cli_alert_success('Finished downloading population data')
-    pop_den <- if (!inherits(points, "NULL")) {
-      pop_total / (100 * 100)
-    } else {
-      pop_total / as.numeric(sf::st_area(polygons))
+    if (!inherits(points, "NULL")) {
+      return(list(pop_total = pop_total, cell_id = cell_id))
     }
-    return(list(pop_total = pop_total, pop_den = pop_den))
+    return(list(pop_total = pop_total))
   }
 
   for (i in seq_len(nrow(intersected_tiles))) {
@@ -787,19 +924,13 @@ get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL, polygons = NULL,
   }
   if (!quiet) cli::cli_alert_success('Finished downloading population data')
 
-  # Combine only the cropped input extent, not full GHSL tiles.
   r <- if (length(result_list) == 1) result_list[[1]] else do.call(terra::merge, result_list)
-
-  # GHSL POP is people per 100 m cell; report people per 10000 m2.
   r <- r / (100 * 100)
-
-  # Retain the original raster-returning behavior for internal compatibility,
-  # but only project the already-cropped raster.
   utm_crs <- get_utm_crs(bbox)
   terra::project(r, paste0('EPSG:', utm_crs), method = 'near')
 }
 
-#' @noMd
+#' @noRd
 get_GHSres <- function(bbox = NULL, year = NULL) {
   # Store the original 'timeout' option and ensure it's reset upon function exit
   original_timeout <- getOption('timeout')
@@ -863,7 +994,7 @@ get_GHSres <- function(bbox = NULL, year = NULL) {
   }
 }
 
-#' @noMd
+#' @noRd
 get_GHSurl <- function(year, id, type) {
   if (type == 'pop') {
     # source: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
@@ -904,8 +1035,11 @@ get_GHSurl <- function(year, id, type) {
 
 
 
-#' @noMd
+#' @noRd
 get_dem <- function(bbox, key) {
+  if (!requireNamespace("dsmSearch", quietly = TRUE)) {
+    stop("Package 'dsmSearch' is required for this function. Install it with: install.packages('dsmSearch')", call. = FALSE)
+  }
   if (missing(key)) stop("missing api key")
   bbox <- as_wgs84_bbox_vector(bbox)
 
@@ -952,8 +1086,79 @@ get_dem <- function(bbox, key) {
 }
 
 
-#' @noMd
-get_chm <- function(bbox, min_height, datasource = "metachm") {
+#' Retry a raster download after purging corrupt cached tiles
+#'
+#' @description
+#' Tile downloads (Meta CHM, ETH CHM, DEM) are cached to `tempdir()` by the
+#' upstream package. A truncated download stays cached for the whole session
+#' and fails on every subsequent read, surfacing as GDAL *warnings*
+#' ("TIFFReadEncodedStrip failed", "IReadBlock failed") followed by empty data
+#' rather than a clean error - so a plain `tryCatch()` never sees it.
+#'
+#' This helper watches for those warnings, deletes the specific files named in
+#' them, and re-evaluates the expression.
+#'
+#' @param expr Expression that downloads and returns a SpatRaster.
+#' @param tries Integer. Total attempts. Default 3.
+#' @param quiet Logical. Suppress retry messages.
+#' @noRd
+with_tile_retry <- function(expr, tries = 3L, quiet = TRUE) {
+  ex <- substitute(expr)
+  pf <- parent.frame()
+  bad_pattern <- "TIFFReadEncodedStrip|TIFFFillStrip|IReadBlock|too few values"
+
+  res <- NULL
+  for (i in seq_len(tries)) {
+    corrupt   <- FALSE
+    bad_files <- character(0)
+
+    res <- withCallingHandlers(
+      tryCatch(
+        eval(ex, pf),
+        error = function(e) {
+          if (grepl(bad_pattern, conditionMessage(e))) corrupt <<- TRUE
+          NULL
+        }
+      ),
+      warning = function(w) {
+        m <- conditionMessage(w)
+        if (grepl(bad_pattern, m)) {
+          corrupt <<- TRUE
+          hit <- regmatches(m, regexpr("/[^,[:space:]]+\\.tif", m))
+          if (length(hit)) bad_files <<- c(bad_files, hit)
+          invokeRestart("muffleWarning")
+        }
+      }
+    )
+
+    if (!corrupt && !is.null(res)) return(res)
+    if (i >= tries) break
+
+    # Purge the exact files named in the warnings; fall back to clearing
+    # cached .tif files in tempdir() if none could be parsed out.
+    bad_files <- unique(bad_files[file.exists(bad_files)])
+    if (!length(bad_files))
+      bad_files <- list.files(tempdir(), pattern = "\\.tif$",
+                              full.names = TRUE, recursive = TRUE)
+    if (length(bad_files)) unlink(bad_files, force = TRUE)
+
+    if (!isTRUE(quiet))
+      message("  Corrupt tile cache detected - purged ", length(bad_files),
+              " file(s), retrying (attempt ", i + 1L, " of ", tries, ") ...")
+    Sys.sleep(2)
+  }
+
+  if (is.null(res))
+    stop("Tile download failed after ", tries, " attempts. The remote server ",
+         "may be serving truncated tiles; try again later.", call. = FALSE)
+  res
+}
+
+#' @noRd
+get_chm <- function(bbox, min_height, datasource = "metachm", quiet = TRUE) {
+  if (!requireNamespace("dsmSearch", quietly = TRUE)) {
+    stop("Package 'dsmSearch' is required for this function. Install it with: install.packages('dsmSearch')", call. = FALSE)
+  }
   bbox <- as_wgs84_bbox_vector(bbox)
   datasource <- tolower(as.character(datasource[1]))
   datasource <- match.arg(datasource, c("metachm", "ethchm"))
@@ -962,8 +1167,12 @@ get_chm <- function(bbox, min_height, datasource = "metachm") {
     metachm = "metaCHM",
     ethchm = "ethCHM"
   )
-  # get CHM
-  chm <- suppressMessages(dsmSearch::get_dsm_30(bbox = bbox, datatype = datatype))
+  # get CHM - retried with a cache purge if the tile comes back truncated
+  chm <- with_tile_retry(
+    suppressMessages(dsmSearch::get_dsm_30(bbox = bbox, datatype = datatype)),
+    tries = 3L,
+    quiet = quiet
+  )
   # reporject chm
   bbox <- sf::st_as_sfc(
     sf::st_bbox(
@@ -982,7 +1191,7 @@ get_chm <- function(bbox, min_height, datasource = "metachm") {
   return(list(filteredCHM, binaryCHM))
 }
 
-#' @noMd
+#' @noRd
 get_greenspace <- function(bbox = NULL, buffer = NULL,
                            type = NULL, zoom = 17, year = NULL,
                            min_tree_height = 2) {
@@ -1018,7 +1227,202 @@ get_greenspace <- function(bbox = NULL, buffer = NULL,
 
 }
 
-#' @noMd
+#' @noRd
+fetch_greenspace_tile <- function(...) {
+  if (!requireNamespace("greenSD", quietly = TRUE)) {
+    stop("Package 'greenSD' is required for this function. Install it with: install.packages('greenSD')", call. = FALSE)
+  }
+  tryCatch(
+    greenSD::get_tile_green(...),
+    error = function(e) {
+      message <- conditionMessage(e)
+      if (grepl("lazy-load database|\\.rdb|R_decompress1|libdeflate|corrupt", message, ignore.case = TRUE)) {
+        stop(
+          "The installed `greenSD` package appears to be corrupt and cannot load its lazy-load database. ",
+          "Restart R, reinstall `greenSD`, and then rerun the noise workflow. ",
+          "For example: remove.packages('greenSD'); install.packages('greenSD'). ",
+          "Original error: ", message,
+          call. = FALSE
+        )
+      }
+      stop(e)
+    }
+  )
+}
+
+#' Fetch ESA WorldCover land cover and reclassify to aerodynamic roughness
+#' length (z0) values suitable for OpenFOAM nutURoughWallFunction.
+#'
+#' ESA WorldCover class codes and their z0 assignments (metres):
+#'   10  Tree cover          -> 1.00  (set to NA if mask_tree_cover = TRUE,
+#'                                     so porous-zone treatment is not doubled)
+#'   20  Shrubland           -> 0.20
+#'   30  Grassland           -> 0.05
+#'   40  Cropland            -> 0.05
+#'   50  Built-up            -> 0.50  (set to NA over building footprints so
+#'                                     solid STL geometry is not doubled)
+#'   60  Bare / sparse veg   -> 0.01
+#'   70  Snow and ice        -> 0.001
+#'   80  Permanent water     -> 0.0002
+#'   90  Herbaceous wetland  -> 0.05
+#'   95  Mangroves           -> 0.50
+#'  100  Moss and lichen     -> 0.01
+#'
+#' @param bbox  Bounding box accepted by as_wgs84_bbox_vector().
+#' @param source Character. Land-cover dataset: `"esa"` (ESA WorldCover,
+#'   years 2020–2021) or `"esri"` (Sentinel-2 10 m ESRI LULC Time Series,
+#'   years 2017–2025). Default `"esa"`.
+#' @param year  Land-cover year. For `source = "esa"`: 2020 or 2021.
+#'   For `source = "esri"`: 2017–2025. Default 2021.
+#' @param crs   Optional target CRS for the output raster.
+#' @param building_mask  Optional sf polygon layer of building footprints.
+#'   Cells that fall inside buildings are set to NA (solid geometry handles
+#'   them; roughness should not be applied twice).
+#' @param mask_tree_cover Logical. If TRUE (default), cells classified as tree
+#'   cover are set to NA so that porous-zone drag is not accumulated on top of
+#'   a roughness penalty. For `"esa"`: class 10. For `"esri"`: class 2.
+#'
+#' @return A single-layer SpatRaster named "z0_roughness_m".
+#' @noRd
+get_roughness_raster <- function(bbox,
+                                 source = c("esa", "esri"),
+                                 year = 2021,
+                                 crs = NULL,
+                                 building_mask = NULL,
+                                 mask_tree_cover = TRUE) {
+  source <- match.arg(source)
+
+  if (!requireNamespace("greenSD", quietly = TRUE))
+    stop("Package 'greenSD' is required. Install with: install.packages('greenSD')",
+         call. = FALSE)
+
+  bbox_wgs84 <- as_wgs84_bbox_vector(bbox)
+
+  # greenSD::get_esa_wc() fails on a *named* bbox vector (its internal lapply
+  # over tiles errors with "!anyNA(x) is not TRUE"), so strip names here.
+  bbox_gs <- unname(as.numeric(bbox_wgs84))
+
+  # -- Fetch land-cover raster -----------------------------------------------
+  if (source == "esa") {
+    if (!year %in% c(2020L, 2021L))
+      stop("ESA WorldCover is only available for years 2020 and 2021. ",
+           "Use `landcover_source = 'esri'` for years 2017-2025.", call. = FALSE)
+    lc <- greenSD::get_esa_wc(bbox_gs, datatype = "landcover", year = year)
+  } else {
+    # Sentinel-2 10 m ESRI LULC Time Series (2017-2025)
+    if (!year %in% 2017:2025)
+      stop("ESRI LULC is available for years 2017-2025.", call. = FALSE)
+    lc <- greenSD::get_esa_wc(bbox_gs, datatype = "lulc", year = year)
+  }
+
+  if (is.null(lc))
+    stop(
+      "No land-cover tiles found for the requested area and year ",
+      "(source = '", source, "', year = ", year, ").\n",
+      if (source == "esri")
+        paste0("  The most recent years of the Sentinel-2 LULC Time Series are ",
+               "often not yet published, and coverage varies by region.\n",
+               "  Try an earlier year, e.g. `landcover_year = 2023`.")
+      else
+        "  ESA WorldCover covers 2020 and 2021 only.",
+      call. = FALSE
+    )
+
+  # greenSD may return a list or a multi-layer time-series stack; take layer 1
+  if (is.list(lc) && !inherits(lc, "SpatRaster")) lc <- lc[[1L]]
+  if (terra::nlyr(lc) > 1L) lc <- lc[[1L]]
+
+  # Drop category and colour tables. Categorical rasters make `classify()`
+  # and `lc == code` operate on labels rather than the raw class codes, and a
+  # colour table carried through classify() produces a mis-rendered z0 raster.
+  if (terra::is.factor(lc)) terra::levels(lc) <- NULL
+  try(terra::coltab(lc) <- NULL, silent = TRUE)
+  lc <- terra::as.int(lc)
+
+  # -- Reproject to UTM for metric accuracy ----------------------------------
+  utm_crs <- get_utm_crs(bbox_wgs84)
+  lc <- terra::project(lc, paste0("EPSG:", utm_crs), method = "near")
+
+  # -- Reclassify: class code -> z0 (m) --------------------------------------
+  if (source == "esa") {
+    # ESA WorldCover class codes
+    rcl <- matrix(
+      c(
+         10,  1.0000,   # Tree cover
+         20,  0.2000,   # Shrubland
+         30,  0.0500,   # Grassland
+         40,  0.0500,   # Cropland
+         50,  0.0300,   # Built-up -> paved ground between resolved buildings
+         60,  0.0100,   # Bare / sparse vegetation
+         70,  0.0010,   # Snow and ice
+         80,  0.0002,   # Permanent water bodies
+         90,  0.0500,   # Herbaceous wetland
+         95,  0.5000,   # Mangroves (tall vegetation, not building-resolved)
+        100,  0.0100    # Moss and lichen
+      ),
+      ncol = 2, byrow = TRUE
+    )
+    tree_class <- 10L
+  } else {
+    # ESRI LULC class codes (Sentinel-2 10 m Time Series)
+    # Class 3 and 6 are not defined in the ESRI schema.
+    rcl <- matrix(
+      c(
+         1,  0.0002,  # Water — rivers, ponds, lakes, oceans
+         2,  1.0000,  # Trees — tall dense vegetation (≥ ~4.5 m); masked as porous zone
+         4,  0.0500,  # Flooded vegetation — rice paddies, flooded mangroves, emergent veg
+         5,  0.0500,  # Crops — cereals, grasses, soy, fallow (not at tree height)
+         7,  0.0300,  # Built area -> paved ground between resolved buildings
+         8,  0.0100,  # Bare ground — rock, sand, desert, dry lake beds, mines
+         9,  0.0010,  # Snow / ice — glaciers, permanent snowpack
+        10,  0.0300,  # Clouds — no land-cover information; fallback value
+        11,  0.1000   # Rangeland — parks, lawns, pastures, savannas, sparse shrub/grass
+      ),
+      ncol = 2, byrow = TRUE
+    )
+    tree_class <- 2L
+  }
+
+  z0 <- terra::classify(lc, rcl, others = 0.03)
+  names(z0) <- "z0_roughness_m"
+
+  # -- Mask tree-cover cells (handled as porous zones, not roughness) --------
+  if (isTRUE(mask_tree_cover))
+    z0 <- terra::ifel(lc == tree_class, NA, z0)
+
+  # -- Mask building footprint cells (solid STL geometry) -------------------
+  if (!is.null(building_mask)) {
+    bm_proj <- sf::st_transform(building_mask, paste0("EPSG:", utm_crs))
+    building_r <- terra::rasterize(
+      terra::vect(bm_proj), z0, field = 1L, background = 0L
+    )
+    z0 <- terra::ifel(building_r == 1L, NA, z0)
+  }
+
+  # -- Reproject to caller-supplied CRS if requested -------------------------
+  # `crs` may arrive as an sf crs object, a sp CRS, an EPSG integer, or a
+  # string; terra::project() only accepts a character CRS or a SpatRaster.
+  if (!is.null(crs)) {
+    crs_chr <- if (inherits(crs, "crs")) {
+      if (!is.na(crs$wkt)) crs$wkt else as.character(crs$input)
+    } else if (is.numeric(crs)) {
+      paste0("EPSG:", as.integer(crs))
+    } else {
+      as.character(crs)
+    }
+
+    # "near" (not bilinear): z0 is a lookup from discrete land-cover classes.
+    # Interpolating across class boundaries invents roughness lengths that
+    # correspond to no class, and smears NA tree/building cells into
+    # neighbouring cells.
+    if (!is.na(crs_chr) && nzchar(crs_chr))
+      z0 <- terra::project(z0, crs_chr, method = "near")
+  }
+
+  z0
+}
+
+#' @noRd
 filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
   stopifnot(inherits(r, "SpatRaster"))
   unit <- match.arg(unit, c("m2", "ha", "km2"))
@@ -1053,7 +1457,7 @@ filter_patch_area <- function(r, min_area, unit = "m2", directions = 8) {
   return(out)
 }
 
-#' @noMd
+#' @noRd
 merge_elev <- function(building, dem, chm=NULL) {
   # prioritize layers:  (chm >) building > dem
   bc <- terra::overlay(r1, building, fun = function(x, y) {
@@ -1062,7 +1466,7 @@ merge_elev <- function(building, dem, chm=NULL) {
 }
 
 #' @importFrom sf st_buffer st_centroid
-#' @noMd
+#' @noRd
 get_buffer <- function(x = NULL, radius = NULL) {
   bbox <- get_bbox(x)
   utm_crs <- get_utm_crs(bbox)
@@ -1074,7 +1478,7 @@ get_buffer <- function(x = NULL, radius = NULL) {
 }
 
 #### Projection tools ####
-#' @noMd
+#' @noRd
 get_utm_crs <- function(bbox) {
   if (is.numeric(bbox) && length(bbox) == 4) {
     bbox <- sf::st_as_sfc(
@@ -1100,7 +1504,7 @@ get_utm_crs <- function(bbox) {
   return(epsg)
 }
 
-#' @noMd
+#' @noRd
 reproj <- function(bbox, poly, utm_crs, res) {
   bbox_proj <- sf::st_transform(bbox, crs = utm_crs)
   poly_proj <- sf::st_transform(poly, crs = utm_crs)
@@ -1115,14 +1519,14 @@ reproj <- function(bbox, poly, utm_crs, res) {
   return(list(bbox_aligned, poly_proj, bbox_raster))
 }
 
-#' @noMd
+#' @noRd
 get_bbox <- function(x) {
   bbox <- sf::st_as_sfc(sf::st_bbox(x), crs = sf::st_crs(x))
   bbox <- sf::st_transform(bbox, crs = 4326)
   return(bbox)
 }
 
-#' @noMd
+#' @noRd
 bbox_poly_to_list <- function(bbox) {
   coor <- sf::st_coordinates(bbox)
   return(
@@ -1130,7 +1534,7 @@ bbox_poly_to_list <- function(bbox) {
   )
 }
 
-#' @noMd
+#' @noRd
 as_wgs84_bbox_vector <- function(bbox) {
   if (inherits(bbox, c("sf", "sfc"))) {
     if (is.na(sf::st_crs(bbox))) {
@@ -1169,7 +1573,7 @@ as_wgs84_bbox_vector <- function(bbox) {
   bbox
 }
 
-#' @noMd
+#' @noRd
 unify_layers <- function(bbox, ...) {
   utm_crs <- get_utm_crs(bbox)
   input_layers <- list(...)
@@ -1188,12 +1592,14 @@ unify_layers <- function(bbox, ...) {
   return(aligned_layers)
 }
 
-#' @noMd
+#' @noRd
 compute_gvi_per_building <- function(building,
                                      dem_path,
                                      chm_path,
                                      binary_green_path,
                                      bh_all_path,
+                                     base_elev_path = NULL,
+                                     bldg_id_path = NULL,
                                      radius,
                                      floor,
                                      floor_step,
@@ -1205,6 +1611,8 @@ compute_gvi_per_building <- function(building,
   chm <- terra::rast(chm_path)
   binary_green <- terra::rast(binary_green_path)
   bh_all <- terra::rast(bh_all_path)
+  base_elev <- if (!is.null(base_elev_path)) terra::rast(base_elev_path) else NULL
+  bldg_id   <- if (!is.null(bldg_id_path)) terra::rast(bldg_id_path) else NULL
 
   # Compute centroid
   centroid <- suppressWarnings(sf::st_centroid(building$geometry))
@@ -1216,6 +1624,8 @@ compute_gvi_per_building <- function(building,
   chm <- terra::crop(chm, terra::vect(buffer), mask = TRUE)
   binary_green <- terra::crop(binary_green, terra::vect(buffer), mask = TRUE)
   bh_all <- terra::crop(bh_all, terra::vect(buffer), mask = TRUE)
+  if (!is.null(base_elev)) base_elev <- terra::crop(base_elev, terra::vect(buffer), mask = TRUE)
+  if (!is.null(bldg_id))   bldg_id   <- terra::crop(bldg_id, terra::vect(buffer), mask = TRUE)
 
   # Flatten the target building footprint: it is the observer, not an obstacle.
   target_mask <- terra::rasterize(terra::vect(building), bh_all, field = 1, background = 0)
@@ -1226,7 +1636,25 @@ compute_gvi_per_building <- function(building,
   surface <- terra::ifel(chm_without_target > bh_without_target,
                          chm_without_target,
                          bh_without_target)
-  dsm_ <- dem + surface
+  ground_dsm <- dem + surface
+
+  # Flatten neighboring buildings' roofs: each building keeps a single flat
+  # roof elevation (its own base ground elevation + height) instead of
+  # following the terrain slope pixel by pixel, matching get_fused_dsm().
+  # The target building's own footprint was already zeroed out above (its
+  # `bh_without_target` is 0 there), so it correctly reduces to ground level
+  # rather than getting a flat roof of its own.
+  if (!is.null(base_elev) && !is.null(bldg_id)) {
+    building_mask <- bldg_id > 0
+    flat_roof <- base_elev + bh_without_target
+    dsm_ <- terra::ifel(
+      building_mask,
+      terra::ifel(flat_roof > ground_dsm, flat_roof, ground_dsm),
+      ground_dsm
+    )
+  } else {
+    dsm_ <- ground_dsm
+  }
   get_gvi_values <- function(height) {
     if (inherits(directions, "NULL")) {
       return(get_gvi(dsm_, p, height, radius, building, binary_green))
@@ -1243,13 +1671,18 @@ compute_gvi_per_building <- function(building,
     )
   }
   overall_gvi <- function(values) {
-    if (is.null(names(values))) return(as.numeric(values))
-    as.numeric(values[["overall"]])
+    v <- if ("overall" %in% names(values)) values$overall else values
+    as.numeric(v$gvi)
+  }
+  overall_green_area <- function(values) {
+    v <- if ("overall" %in% names(values)) values$overall else values
+    as.numeric(v$green_area)
   }
 
   height_bottom <- 1.7
   bottom_values <- get_gvi_values(height_bottom)
   bottom_gvi <- overall_gvi(bottom_values)
+  bottom_green_area <- overall_green_area(bottom_values)
   top_values <- if (building$Height < short_building_threshold) {
     bottom_values
   } else {
@@ -1257,12 +1690,14 @@ compute_gvi_per_building <- function(building,
     get_gvi_values(height_top)
   }
   top_gvi <- overall_gvi(top_values)
+  top_green_area <- overall_green_area(top_values)
   direction_results <- list()
 
   if (isTRUE(floor)) {
     floor_ids <- unique(c(seq.int(1L, building$estimated_floors, by = floor_step),
                           building$estimated_floors))
     GVIs <- numeric(length(floor_ids))
+    GreenAreas <- numeric(length(floor_ids))
     directional_GVIs <- if (!inherits(directions, "NULL")) {
       stats::setNames(vector("list", length(directions)), directions)
     } else {
@@ -1272,9 +1707,10 @@ compute_gvi_per_building <- function(building,
       height <- 1.7 + (floor_ids[j] - 1) * 3
       floor_values <- get_gvi_values(height)
       GVIs[j] <- overall_gvi(floor_values)
+      GreenAreas[j] <- overall_green_area(floor_values)
       if (!inherits(directions, "NULL")) {
         for (direction in directions) {
-          directional_GVIs[[direction]][j] <- as.numeric(floor_values[[direction]])
+          directional_GVIs[[direction]][j] <- as.numeric(floor_values[[direction]]$gvi)
         }
       }
     }
@@ -1282,8 +1718,8 @@ compute_gvi_per_building <- function(building,
       for (direction in directions) {
         direction_results[[direction]] <- list(
           mean = mean(directional_GVIs[[direction]]),
-          bottom = as.numeric(bottom_values[[direction]]),
-          top = as.numeric(top_values[[direction]]),
+          bottom = as.numeric(bottom_values[[direction]]$gvi),
+          top = as.numeric(top_values[[direction]]$gvi),
           min = min(directional_GVIs[[direction]]),
           max = max(directional_GVIs[[direction]]),
           sd = if (length(directional_GVIs[[direction]]) > 1) {
@@ -1301,18 +1737,23 @@ compute_gvi_per_building <- function(building,
       min = min(GVIs),
       max = max(GVIs),
       sd = if (length(GVIs) > 1) stats::sd(GVIs) else NA_real_,
+      bottom_green_area = bottom_green_area,
+      top_green_area = top_green_area,
+      mean_green_area = mean(GreenAreas),
       directions = direction_results
     ))
   } else {
     if (building$Height < short_building_threshold) {
       mean_gvi <- bottom_gvi
+      mean_green_area <- bottom_green_area
     } else {
       mean_gvi <- mean(c(top_gvi, bottom_gvi))
+      mean_green_area <- mean(c(top_green_area, bottom_green_area))
     }
     if (!inherits(directions, "NULL")) {
       for (direction in directions) {
-        direction_bottom <- as.numeric(bottom_values[[direction]])
-        direction_top <- as.numeric(top_values[[direction]])
+        direction_bottom <- as.numeric(bottom_values[[direction]]$gvi)
+        direction_top <- as.numeric(top_values[[direction]]$gvi)
         direction_mean <- if (building$Height < short_building_threshold) {
           direction_bottom
         } else {
@@ -1340,6 +1781,9 @@ compute_gvi_per_building <- function(building,
       min = NA_real_,
       max = NA_real_,
       sd = NA_real_,
+      bottom_green_area = bottom_green_area,
+      top_green_area = top_green_area,
+      mean_green_area = mean_green_area,
       directions = direction_results
     ))
   }
@@ -2041,11 +2485,18 @@ shadow_building_ring_data <- function(buildings, height_field) {
   )
 }
 
-prepare_radiation_grid <- function(grid, buildings, height_field, grid_res, offset) {
-  if (is.null(grid)) {
-    return(surface_grid_sf(buildings, height_field, grid_res, offset))
+prepare_radiation_grid <- function(grid, buildings, height_field, grid_res, offset,
+                                   ground = FALSE, ground_res = NULL, dem = NULL) {
+  if (!is.null(grid)) {
+    return(align_location_points(grid, buildings, "grid"))
   }
-  align_location_points(grid, buildings, "grid")
+  surface <- surface_grid_sf(buildings, height_field, grid_res, offset)
+  if (isTRUE(ground)) {
+    gres <- if (is.null(ground_res)) grid_res else ground_res
+    gnd  <- ground_grid_sf(buildings, gres, offset, dem)
+    if (nrow(gnd) > 0L) surface <- rbind(surface, gnd)
+  }
+  surface
 }
 
 surface_grid_sf <- function(buildings, height_field, grid_res, offset) {
@@ -2086,6 +2537,16 @@ facade_grid_sf <- function(buildings, height_field, grid_res, offset) {
     rings <- polygon_rings(sf::st_geometry(buildings[i, ]))
     for (ring in rings) {
       xy <- ring
+      # Determine ring winding order via signed area (shoelace formula).
+      # Positive = CCW (y-up), negative = CW.  `c(edge[2], -edge[1])` gives the
+      # outward normal for CCW rings; flip sign for CW rings so normals always
+      # point outward regardless of how the source data wound the polygon.
+      n_ring <- nrow(xy)
+      signed_area <- sum(
+        xy[seq_len(n_ring - 1), 1] * xy[seq_len(n_ring - 1) + 1, 2] -
+        xy[seq_len(n_ring - 1) + 1, 1] * xy[seq_len(n_ring - 1), 2]
+      ) / 2
+      orient <- if (signed_area >= 0) 1L else -1L
       for (e in seq_len(nrow(xy) - 1)) {
         p1 <- xy[e, ]
         p2 <- xy[e + 1, ]
@@ -2099,7 +2560,7 @@ facade_grid_sf <- function(buildings, height_field, grid_res, offset) {
         pts <- do.call(rbind, lapply(mids, function(m) p1 + m * edge))
         pts <- pts[rep(seq_len(nrow(pts)), each = length(zs)), , drop = FALSE]
         z <- rep(zs, times = length(mids))
-        normal <- c(edge[2], -edge[1]) / edge_len
+        normal <- orient * c(edge[2], -edge[1]) / edge_len
         n <- nrow(pts)
         out[[length(out) + 1]] <- sf::st_sf(
           building_id = rep(i, n),
@@ -2118,6 +2579,44 @@ facade_grid_sf <- function(buildings, height_field, grid_res, offset) {
     }
   }
   do.call(rbind, out)
+}
+
+# `dem` is accepted for API symmetry but intentionally unused: ground `z` is a
+# height above local ground, and terrain enters through surface_ground_elevation().
+ground_grid_sf <- function(buildings, grid_res, offset, dem = NULL) {
+  bbox_poly <- sf::st_as_sfc(sf::st_bbox(buildings))
+  pts <- sf::st_make_grid(bbox_poly, cellsize = grid_res, what = "centers")
+  # Drop points that fall inside any building footprint
+  in_building <- lengths(sf::st_within(pts, sf::st_union(sf::st_geometry(buildings)))) > 0L
+  pts <- pts[!in_building]
+  if (length(pts) == 0L) {
+    return(sf::st_sf(
+      building_id = integer(0), surface = character(0), z = numeric(0),
+      nx = numeric(0), ny = numeric(0), nz = numeric(0), svf = numeric(0),
+      geometry = sf::st_sfc(crs = sf::st_crs(buildings))
+    ))
+  }
+  pts_sf <- sf::st_sf(geometry = pts, crs = sf::st_crs(buildings))
+  xy <- sf::st_coordinates(pts_sf)
+  n  <- nrow(xy)
+  # `z` must be HEIGHT ABOVE LOCAL GROUND, matching roof and facade points.
+  # Shadow heights from shadow_height_at_xy() / canopy_shadow_height_at_xy()
+  # are also expressed above local ground, so adding absolute DEM elevation
+  # here would make every shadow test fail and leave the ground always sunlit.
+  # Terrain is accounted for separately via surface_ground_elevation().
+  sf::st_sf(
+    building_id = rep(NA_integer_, n),
+    surface     = rep("ground", n),
+    z           = rep(offset, n),
+    nx          = rep(0, n),
+    ny          = rep(0, n),
+    nz          = rep(1, n),
+    svf         = rep(1, n),
+    geometry    = sf::st_sfc(
+      lapply(seq_len(n), function(k) sf::st_point(c(xy[k, 1L], xy[k, 2L]))),
+      crs = sf::st_crs(buildings)
+    )
+  )
 }
 
 polygon_rings <- function(geometry) {
@@ -2214,6 +2713,160 @@ estimate_shadow_buffer <- function(buildings, solar_pos, height_field) {
   buffer <- max(buildings[[height_field]], na.rm = TRUE) /
     tan(min(positive_elev) * pi / 180)
   max(buffer, max(buildings[[height_field]], na.rm = TRUE), 100)
+}
+
+estimate_svf_buffer <- function(buildings, height_field, canopy_height = NULL, max_distance = NULL) {
+  if (!is.null(max_distance) && is.finite(max_distance)) {
+    return(max_distance)
+  }
+  max_height <- max(buildings[[height_field]], na.rm = TRUE)
+  if (inherits(canopy_height, "SpatRaster")) {
+    canopy_max <- suppressWarnings(terra::global(canopy_height[[1]], "max", na.rm = TRUE)[1, 1])
+    if (is.finite(canopy_max)) {
+      max_height <- max(max_height, canopy_max, na.rm = TRUE)
+    }
+  }
+  max(max_height * 5, 100)
+}
+
+make_svf_template <- function(buildings, grid_res, extent_buffer) {
+  bbox <- sf::st_bbox(buildings)
+  terra::rast(
+    xmin = bbox[["xmin"]] - extent_buffer,
+    xmax = bbox[["xmax"]] + extent_buffer,
+    ymin = bbox[["ymin"]] - extent_buffer,
+    ymax = bbox[["ymax"]] + extent_buffer,
+    resolution = grid_res,
+    crs = sf::st_crs(buildings)$wkt
+  )
+}
+
+compute_svf_raster <- function(template,
+                               buildings,
+                               height_field,
+                               canopy,
+                               dem,
+                               res_angle,
+                               observer_height,
+                               max_distance) {
+  xy <- terra::xyFromCell(template, seq_len(terra::ncell(template)))
+  building_rings <- shadow_building_ring_data(buildings, height_field)
+  observer_ground <- rep(0, nrow(xy))
+  if (!is.null(dem)) {
+    dem <- align_spatraster_to_template(dem, template, "dem")
+    observer_ground <- terra::extract(dem, xy)[, 1]
+    observer_ground[is.na(observer_ground)] <- 0
+  }
+  building_ground <- rep(0, nrow(buildings))
+  if (!is.null(dem)) {
+    building_xy <- sf::st_coordinates(sf::st_centroid(sf::st_geometry(buildings)))[, c("X", "Y"), drop = FALSE]
+    building_ground <- terra::extract(dem, building_xy)[, 1]
+    building_ground[is.na(building_ground)] <- 0
+  }
+  canopy_xy <- matrix(numeric(), ncol = 2)
+  canopy_h <- numeric()
+  canopy_ground <- numeric()
+  canopy_cell_size <- 0
+  if (!is.null(canopy)) {
+    canopy_xy <- canopy$xy
+    canopy_h <- canopy$height
+    canopy_ground <- canopy$ground
+    canopy_cell_size <- canopy$cell_size
+  }
+  azimuth <- seq(0, 360 - res_angle, by = res_angle)
+  values <- svf_cpp(
+    xy = xy,
+    azimuth = azimuth,
+    rings = building_rings$rings,
+    ring_building = building_rings$ring_building,
+    building_height = building_rings$heights,
+    building_ground = building_ground,
+    canopy_xy = canopy_xy,
+    canopy_height = canopy_h,
+    canopy_ground = canopy_ground,
+    observer_ground = observer_ground,
+    observer_height = rep(observer_height, nrow(xy)),
+    canopy_cell_size = canopy_cell_size,
+    max_distance = if (is.null(max_distance)) Inf else max_distance
+  )
+  building_mask <- terra::rasterize(terra::vect(buildings), template, field = 1, background = NA)
+  values[!is.na(terra::values(building_mask, mat = FALSE))] <- NA_real_
+  out <- template
+  terra::values(out) <- values
+  names(out) <- "svf"
+  out
+}
+
+surface_ground_elevation <- function(surface, dem) {
+  ground <- rep(0, nrow(surface))
+  if (!is.null(dem)) {
+    xy <- sf::st_coordinates(surface)[, c("X", "Y"), drop = FALSE]
+    ground <- terra::extract(dem, xy)[, 1]
+    ground[is.na(ground)] <- 0
+  }
+  ground
+}
+
+building_ground_elevation <- function(buildings, dem) {
+  ground <- rep(0, nrow(buildings))
+  if (!is.null(dem)) {
+    building_xy <- sf::st_coordinates(sf::st_centroid(sf::st_geometry(buildings)))[, c("X", "Y"), drop = FALSE]
+    ground <- terra::extract(dem, building_xy)[, 1]
+    ground[is.na(ground)] <- 0
+  }
+  ground
+}
+
+surface_svf <- function(surface,
+                        buildings,
+                        height_field,
+                        canopy,
+                        dem,
+                        res_angle,
+                        max_distance) {
+  if (!is.null(dem)) {
+    dem <- align_spatraster_to_buildings(dem, buildings, "dem")
+  }
+  xy <- sf::st_coordinates(surface)[, c("X", "Y"), drop = FALSE]
+  building_rings <- shadow_building_ring_data(buildings, height_field)
+  observer_ground <- surface_ground_elevation(surface, dem)
+  building_ground <- building_ground_elevation(buildings, dem)
+  canopy_xy <- matrix(numeric(), ncol = 2)
+  canopy_h <- numeric()
+  canopy_ground <- numeric()
+  canopy_cell_size <- 0
+  if (!is.null(canopy)) {
+    canopy_xy <- canopy$xy
+    canopy_h <- canopy$height
+    canopy_ground <- canopy$ground
+    canopy_cell_size <- canopy$cell_size
+  }
+  azimuth <- seq(0, 360 - res_angle, by = res_angle)
+  pmin(pmax(svf_cpp(
+    xy = xy,
+    azimuth = azimuth,
+    rings = building_rings$rings,
+    ring_building = building_rings$ring_building,
+    building_height = building_rings$heights,
+    building_ground = building_ground,
+    canopy_xy = canopy_xy,
+    canopy_height = canopy_h,
+    canopy_ground = canopy_ground,
+    observer_ground = observer_ground,
+    observer_height = surface$z,
+    canopy_cell_size = canopy_cell_size,
+    max_distance = if (is.null(max_distance)) Inf else max_distance
+  ), 0), 1)
+}
+
+plot_svf_raster <- function(buildings, svf_raster) {
+  graphics::plot(
+    svf_raster,
+    col = grDevices::hcl.colors(100, "Cividis", rev = TRUE),
+    main = "Sky View Factor"
+  )
+  graphics::plot(sf::st_geometry(buildings), col = "black", border = NA, add = TRUE)
+  invisible(NULL)
 }
 
 prepare_canopy_obstacles <- function(canopy_height, dem, buildings, min_tree_height) {
@@ -2325,9 +2978,21 @@ canopy_shadow_shift <- function(height, solar_pos) {
 
 compute_surface_radiation <- function(surface, buildings, solar_pos, solar_normal,
                                       solar_diffuse, height_field, canopy,
-                                      canopy_transmissivity) {
+                                      canopy_transmissivity,
+                                      dem = NULL,
+                                      svf_res_angle = 15,
+                                      radius = Inf) {
   xy <- sf::st_coordinates(surface)[, c("X", "Y"), drop = FALSE]
   z <- surface$z
+  svf_values <- surface_svf(
+    surface = surface,
+    buildings = buildings,
+    height_field = height_field,
+    canopy = canopy,
+    dem = dem,
+    res_angle = svf_res_angle,
+    max_distance = radius
+  )
   direct_by_time <- matrix(0, nrow = nrow(surface), ncol = nrow(solar_pos))
   diffuse_by_time <- matrix(0, nrow = nrow(surface), ncol = nrow(solar_pos))
   for (j in seq_len(nrow(solar_pos))) {
@@ -2345,10 +3010,10 @@ compute_surface_radiation <- function(surface, buildings, solar_pos, solar_norma
     transmission[shaded_by_canopy] <- canopy_transmissivity
     transmission[shaded_by_building] <- 0
     direct_by_time[, j] <- solar_normal[j] * incidence * transmission
-    diffuse_by_time[, j] <- solar_diffuse[j] * surface$svf
+    diffuse_by_time[, j] <- solar_diffuse[j] * svf_values
   }
   list(
-    svf = surface$svf,
+    svf = svf_values,
     direct = rowSums(direct_by_time),
     diffuse = rowSums(diffuse_by_time),
     total = rowSums(direct_by_time) + rowSums(diffuse_by_time),
@@ -2356,49 +3021,415 @@ compute_surface_radiation <- function(surface, buildings, solar_pos, solar_norma
   )
 }
 
+draw_colorbar <- function(cols, lo, hi, title = "", n_ticks = 5L) {
+  # Vertical gradient colour bar drawn just outside the right edge of the
+  # current panel.  All geometry is in *user* coordinates derived from
+  # par("usr"), and xpd = NA allows drawing into the figure margin.
+  usr <- graphics::par("usr")   # c(x1, x2, y1, y2), user coordinates
+  xw  <- usr[2L] - usr[1L]
+  yh  <- usr[4L] - usr[3L]
+  if (!is.finite(xw) || !is.finite(yh) || xw <= 0 || yh <= 0) {
+    return(invisible(NULL))
+  }
+  bar_x0 <- usr[2L] + xw * 0.03
+  bar_x1 <- bar_x0  + xw * 0.035
+  bar_y0 <- usr[3L] + yh * 0.20
+  bar_y1 <- usr[3L] + yh * 0.80
+
+  old_xpd <- graphics::par("xpd")
+  on.exit(graphics::par(xpd = old_xpd), add = TRUE)
+  graphics::par(xpd = NA)
+
+  n  <- length(cols)
+  ys <- seq(bar_y0, bar_y1, length.out = n + 1L)
+  graphics::rect(bar_x0, ys[-(n + 1L)], bar_x1, ys[-1L],
+                 col = cols, border = NA)
+  graphics::rect(bar_x0, bar_y0, bar_x1, bar_y1,
+                 col = NA, border = "grey30", lwd = 0.6)
+
+  # Numeric tick labels along the right side of the bar
+  if (is.finite(lo) && is.finite(hi)) {
+    tick_v <- seq(lo, hi, length.out = n_ticks)
+    tick_y <- seq(bar_y0, bar_y1, length.out = n_ticks)
+    graphics::segments(bar_x1, tick_y, bar_x1 + xw * 0.008, tick_y,
+                       col = "grey30", lwd = 0.6)
+    graphics::text(bar_x1 + xw * 0.014, tick_y,
+                   labels = format(signif(tick_v, 3L), trim = TRUE),
+                   adj = c(0, 0.5), cex = 0.6)
+  }
+  # Title above the bar
+  if (nzchar(title)) {
+    graphics::text((bar_x0 + bar_x1) / 2, bar_y1 + yh * 0.04,
+                   labels = title, adj = c(0.5, 0), cex = 0.65)
+  }
+  invisible(NULL)
+}
+
 plot_radiation_surface <- function(buildings, radiation) {
   if (nrow(radiation) == 0) {
     graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey40")
     return(invisible(NULL))
   }
-  cols <- grDevices::hcl.colors(100, "YlOrRd", rev = TRUE)
-  breaks <- cut(
-    radiation$total,
-    breaks = 100,
-    include.lowest = TRUE,
-    labels = FALSE
-  )
-  breaks[is.na(breaks)] <- 1
-  graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey45")
-  facade <- radiation$surface == "facade"
-  if (any(facade)) {
-    graphics::plot(
-      sf::st_geometry(radiation[facade, ]),
-      pch = 16,
-      cex = 0.25,
-      col = grDevices::adjustcolor("grey25", alpha.f = 0.35),
-      add = TRUE
-    )
+  rad_cols <- radiation_palette(100L)
+  make_idx <- function(vals, rng) {
+    if (!is.finite(diff(rng)) || diff(rng) == 0) return(rep(50L, length(vals)))
+    idx <- round((vals - rng[1L]) / diff(rng) * 99) + 1L
+    idx[is.na(idx)] <- 1L
+    pmin(pmax(idx, 1L), 100L)
   }
-  roof <- radiation$surface == "roof"
-  if (any(roof)) {
-    graphics::plot(
-      sf::st_geometry(radiation[roof, ]),
-      pch = 16,
-      cex = 0.75,
-      col = cols[breaks[roof]],
-      add = TRUE
+  ground     <- radiation$surface == "ground"
+  facade     <- radiation$surface == "facade"
+  roof       <- radiation$surface == "roof"
+  has_ground <- any(ground)
+
+  if (has_ground) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
+    graphics::par(mfrow = c(1L, 2L), mar = c(1, 1, 3, 1), oma = c(0, 0, 0, 5))
+
+    gnd_sf <- radiation[ground, ]
+    bb     <- sf::st_bbox(buildings)
+    n_gnd  <- sum(ground)
+    gres   <- sqrt(
+      (bb["xmax"] - bb["xmin"]) * (bb["ymax"] - bb["ymin"]) / max(n_gnd, 1L)
     )
+    tmpl <- terra::rast(
+      xmin = unname(bb["xmin"]), xmax = unname(bb["xmax"]),
+      ymin = unname(bb["ymin"]), ymax = unname(bb["ymax"]),
+      resolution = gres, crs = sf::st_crs(buildings)$wkt
+    )
+    bld_v <- terra::vect(sf::st_geometry(buildings))
+
+    # Shared W/m² scale across ground and roof so colours are comparable
+    total_rng <- range(c(radiation$total[ground], radiation$total[roof]),
+                       na.rm = TRUE)
+    brks <- seq(total_rng[1L], total_rng[2L], length.out = 101L)
+
+    # Both panels are set up with an identical empty base plot (same limits,
+    # same aspect) so their plot regions match and the titles line up.
+    new_panel <- function(main) {
+      graphics::plot(NA, type = "n", asp = 1L, axes = FALSE,
+                     xlab = "", ylab = "", main = main,
+                     xlim = c(bb[["xmin"]], bb[["xmax"]]),
+                     ylim = c(bb[["ymin"]], bb[["ymax"]]))
+    }
+
+    # --- Left panel: ground total radiation ---
+    gnd_r <- terra::rasterize(terra::vect(gnd_sf), tmpl,
+                              field = "total", fun = "mean")
+    gnd_r <- terra::mask(gnd_r, bld_v, inverse = TRUE)
+    new_panel("Ground total radiation (W/m²)")
+    # Drawn with base graphics::image rather than terra::plot, because
+    # terra::plot mutates par("mar") and would shift the next panel's title.
+    gm <- terra::as.matrix(gnd_r, wide = TRUE)
+    graphics::image(
+      x = seq(terra::xmin(gnd_r), terra::xmax(gnd_r), length.out = ncol(gm) + 1L),
+      y = seq(terra::ymin(gnd_r), terra::ymax(gnd_r), length.out = nrow(gm) + 1L),
+      z = t(gm[nrow(gm):1L, , drop = FALSE]),
+      col = rad_cols, breaks = brks, add = TRUE, useRaster = TRUE
+    )
+    graphics::plot(sf::st_geometry(buildings),
+                   col = "grey92", border = "grey35", lwd = 0.6, add = TRUE)
+
+    # --- Right panel: roof total radiation ---
+    new_panel("Roof total radiation (W/m²)")
+    graphics::plot(sf::st_geometry(buildings), col = "grey95",
+                   border = "grey45", add = TRUE)
+    if (any(roof)) {
+      graphics::points(
+        sf::st_coordinates(radiation[roof, ]),
+        pch = 16, cex = 0.75,
+        col = rad_cols[make_idx(radiation$total[roof], total_rng)]
+      )
+    }
+    graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+    # Single shared colour bar for both panels
+    draw_colorbar(rad_cols, total_rng[1L], total_rng[2L], title = "W/m²")
+
+  } else {
+    # Building-only layout
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
+    graphics::par(mar = c(1, 1, 1, 4))
+    total_rng <- range(radiation$total, na.rm = TRUE)
+    graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey45")
+    if (any(facade)) {
+      graphics::plot(
+        sf::st_geometry(radiation[facade, ]),
+        pch = 16, cex = 0.25,
+        col = "grey60",
+        add = TRUE
+      )
+    }
+    if (any(roof)) {
+      graphics::plot(
+        sf::st_geometry(radiation[roof, ]),
+        pch = 16, cex = 0.75,
+        col = rad_cols[make_idx(radiation$total[roof], total_rng)],
+        add = TRUE
+      )
+    }
+    graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+    draw_colorbar(rad_cols, total_rng[1L], total_rng[2L], title = "W/m²")
   }
-  graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
-  graphics::legend(
-    "topright",
-    legend = c("lower total", "higher total", "facade samples"),
-    pch = 16,
-    col = c(cols[1], cols[100], grDevices::adjustcolor("grey25", alpha.f = 0.35)),
-    bty = "n"
-  )
   invisible(NULL)
+}
+
+plot_radiation_surface_3d <- function(buildings, radiation, height_field = "Height") {
+  if (nrow(radiation) == 0L) {
+    graphics::plot.new()
+    graphics::title("No radiation samples")
+    return(invisible(NULL))
+  }
+
+  old_par <- graphics::par(no.readonly = TRUE)
+  on.exit(graphics::par(old_par), add = TRUE)
+  graphics::par(mfrow = c(1L, 3L), mar = c(1, 1, 3, 1), oma = c(0, 0, 0, 4))
+
+  fields <- c("direct", "diffuse", "total")
+  titles <- c("Direct radiation", "Diffuse radiation", "Total radiation")
+  bld_h  <- as.numeric(buildings[[height_field]])
+
+  # ---- Consistent 3D projector fixed to all footprint corners + full height ----
+  all_xy <- do.call(rbind, lapply(seq_len(nrow(buildings)), function(b) {
+    sf::st_coordinates(sf::st_geometry(buildings[b, ]))[, c("X", "Y"), drop = FALSE]
+  }))
+  proj_fn <- make_3d_projector(
+    all_xy[, "X"], all_xy[, "Y"],
+    c(0, max(bld_h, na.rm = TRUE))
+  )
+
+  # Plot limits from projected radiation samples
+  sxy  <- sf::st_coordinates(radiation)[, c("X", "Y"), drop = FALSE]
+  sprj <- proj_fn(sxy[, "X"], sxy[, "Y"], radiation$z)
+  xlim <- range(sprj$x, na.rm = TRUE)
+  ylim <- range(sprj$y, na.rm = TRUE)
+
+  # Building order: farthest first (painter's algorithm).
+  # `depth` grows with distance, so the draw order is DECREASING depth.
+  # The key is evaluated at z = 0 so that building height cannot contaminate
+  # the planar ordering — a tall building must not sort as if it were nearer.
+  bld_ctr <- suppressWarnings(
+    sf::st_coordinates(sf::st_centroid(sf::st_geometry(buildings)))
+  )
+  bld_ord <- order(
+    proj_fn(bld_ctr[, "X"], bld_ctr[, "Y"], rep(0, nrow(bld_ctr)))$depth,
+    decreasing = TRUE
+  )
+
+  # Pre-extract exterior ring + winding orientation per building
+  bld_rings <- lapply(seq_len(nrow(buildings)), function(b) {
+    rings <- polygon_rings(sf::st_geometry(buildings[b, ]))
+    ext   <- rings[[1L]]   # exterior ring is always first from polygon_rings()
+    n     <- nrow(ext)
+    sa    <- sum(ext[seq_len(n - 1L), 1L] * ext[2L:n, 2L] -
+                 ext[2L:n, 1L] * ext[seq_len(n - 1L), 2L]) / 2
+    list(ring = ext, orient = if (sa >= 0) 1L else -1L)
+  })
+
+  # One colour scale shared by all three panels so the same colour means the
+  # same W/m² everywhere and the panels are directly comparable.
+  vrng <- range(unlist(lapply(fields, function(f) radiation[[f]])), na.rm = TRUE)
+
+  for (fi in seq_along(fields)) {
+    fld  <- fields[fi]
+    vals <- radiation[[fld]]
+
+    graphics::plot(xlim, ylim, type = "n", axes = FALSE,
+                   xlab = "", ylab = "", asp = 1L, main = titles[fi])
+
+    for (b in bld_ord) {
+      h <- bld_h[b]
+      if (!is.finite(h) || h <= 0) next
+
+      ring   <- bld_rings[[b]]$ring
+      orient <- bld_rings[[b]]$orient
+      n_edge <- nrow(ring) - 1L
+
+      fac_idx <- which(radiation$building_id == b & radiation$surface == "facade")
+      rof_idx <- which(radiation$building_id == b & radiation$surface == "roof")
+
+      # Sort walls farthest-first, evaluated at ground level for the same
+      # reason as the building ordering above.
+      w_ord <- if (n_edge > 0L) {
+        mx <- (ring[seq_len(n_edge), 1L] + ring[seq_len(n_edge) + 1L, 1L]) / 2
+        my <- (ring[seq_len(n_edge), 2L] + ring[seq_len(n_edge) + 1L, 2L]) / 2
+        order(proj_fn(mx, my, rep(0, n_edge))$depth, decreasing = TRUE)
+      } else integer(0L)
+
+      # ---- Draw facade walls as filled horizontal strips ----
+      for (e in w_ord) {
+        p1  <- ring[e, ]
+        p2  <- ring[e + 1L, ]
+        edv <- p2 - p1
+        elen <- sqrt(sum(edv^2))
+        if (!is.finite(elen) || elen < 1e-9) next
+
+        # Outward normal (consistent with facade_grid_sf after orientation fix)
+        nrm <- orient * c(edv[2L], -edv[1L]) / elen
+
+        # Backface culling: skip walls pointing away from the camera, otherwise
+        # their base edges show through as a spurious footprint outline.
+        if (!facing_camera(nrm[1L], nrm[2L], proj_fn)) next
+
+        eidx <- if (length(fac_idx) > 0L) {
+          fac_idx[abs(radiation$nx[fac_idx] - nrm[1L]) < 1e-4 &
+                  abs(radiation$ny[fac_idx] - nrm[2L]) < 1e-4]
+        } else integer(0L)
+
+        # Full-wall quad, reused for the silhouette outline
+        wall_q <- proj_fn(c(p1[1L], p2[1L], p2[1L], p1[1L]),
+                          c(p1[2L], p2[2L], p2[2L], p1[2L]),
+                          c(0, 0, h, h))
+
+        if (length(eidx) == 0L) {
+          # No radiation samples for this wall — draw neutral grey
+          graphics::polygon(wall_q$x, wall_q$y, col = "grey75",
+                            border = "grey40", lwd = 0.4)
+          next
+        }
+
+        ez  <- radiation$z[eidx]
+        ev  <- vals[eidx]
+        z_u <- sort(unique(ez))
+        n_z <- length(z_u)
+        # Strip boundaries that cover exactly 0..h with no gaps
+        bnd <- if (n_z == 1L) {
+          c(0, h)
+        } else {
+          c(0, (z_u[-n_z] + z_u[-1L]) / 2, h)
+        }
+
+        for (zi in seq_len(n_z)) {
+          sv   <- mean(ev[abs(ez - z_u[zi]) < 1e-9], na.rm = TRUE)
+          scol <- radiation_value_cols_range(sv, vrng)
+          qp   <- proj_fn(c(p1[1L], p2[1L], p2[1L], p1[1L]),
+                          c(p1[2L], p2[2L], p2[2L], p1[2L]),
+                          c(bnd[zi], bnd[zi], bnd[zi + 1L], bnd[zi + 1L]))
+          # Border matched to the fill keeps strips seamless (no hairline gaps)
+          graphics::polygon(qp$x, qp$y, col = scol, border = scol, lwd = 0.3)
+        }
+        # Outline the whole wall face so pale walls stay legible on white
+        graphics::polygon(wall_q$x, wall_q$y, col = NA,
+                          border = "grey40", lwd = 0.4)
+      }
+
+      # ---- Draw roof as filled projected footprint polygon ----
+      rcol <- if (length(rof_idx) > 0L) {
+        radiation_value_cols_range(mean(vals[rof_idx], na.rm = TRUE), vrng)
+      } else {
+        "grey85"
+      }
+      rp <- proj_fn(ring[, 1L], ring[, 2L], rep(h, nrow(ring)))
+      graphics::polygon(rp$x, rp$y, col = rcol,
+                        border = "grey40", lwd = 0.4)
+    }
+
+    # Single shared colour bar, drawn once beside the last panel
+    if (fi == length(fields)) {
+      draw_colorbar(
+        radiation_palette(100L),
+        lo = vrng[1L], hi = vrng[2L],
+        title = "W/m²"
+      )
+    }
+  }
+  invisible(NULL)
+}
+
+# Like project_radiation_3d but with normalization parameters fixed at construction
+# time so that multiple calls use the same coordinate system.
+make_3d_projector <- function(x_ref, y_ref, z_ref, azimuth = 35, elevation = 25) {
+  x_ctr   <- mean(range(as.numeric(x_ref), na.rm = TRUE))
+  y_ctr   <- mean(range(as.numeric(y_ref), na.rm = TRUE))
+  z_min   <- min(as.numeric(z_ref), na.rm = TRUE)
+  x0      <- as.numeric(x_ref) - x_ctr
+  y0      <- as.numeric(y_ref) - y_ctr
+  z0      <- as.numeric(z_ref) - z_min
+  xy_span <- max(diff(range(x0, na.rm = TRUE)), diff(range(y0, na.rm = TRUE)), 1)
+  z_span  <- diff(range(z0, na.rm = TRUE))
+  z_scale <- if (is.finite(z_span) && z_span > 0) xy_span / z_span * 0.18 else 1
+  az <- azimuth * pi / 180; el <- elevation * pi / 180
+  ca <- cos(az); sa <- sin(az); ce <- cos(el); se <- sin(el)
+  fn <- function(x, y, z) {
+    x0 <- as.numeric(x) - x_ctr
+    y0 <- as.numeric(y) - y_ctr
+    z0 <- (as.numeric(z) - z_min) * z_scale
+    xr <- x0 * ca - y0 * sa
+    yr <- x0 * sa + y0 * ca
+    list(x = xr, y = yr * ce + z0 * se, depth = yr * se - z0 * ce)
+  }
+  # Expose rotation terms so callers can perform backface culling: a wall with
+  # outward normal (nx, ny) faces the camera when its rotated y-component is
+  # negative, i.e. moving along the normal decreases projected depth.
+  attr(fn, "sa") <- sa
+  attr(fn, "ca") <- ca
+  fn
+}
+
+# TRUE when a wall with outward normal (nx, ny) is visible to the camera.
+facing_camera <- function(nx, ny, proj_fn) {
+  sa <- attr(proj_fn, "sa"); ca <- attr(proj_fn, "ca")
+  if (is.null(sa) || is.null(ca)) return(TRUE)
+  (nx * sa + ny * ca) < 0
+}
+
+project_radiation_3d <- function(x, y, z, azimuth = 35, elevation = 25) {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+  z <- as.numeric(z)
+  x0 <- x - mean(range(x, na.rm = TRUE))
+  y0 <- y - mean(range(y, na.rm = TRUE))
+  z0 <- z - min(z, na.rm = TRUE)
+  xy_span <- max(diff(range(x0, na.rm = TRUE)), diff(range(y0, na.rm = TRUE)), 1)
+  z_span <- diff(range(z0, na.rm = TRUE))
+  if (is.finite(z_span) && z_span > 0) {
+    z0 <- z0 * xy_span / z_span * 0.18
+  }
+  az <- deg2rad(azimuth)
+  el <- deg2rad(elevation)
+  xr <- x0 * cos(az) - y0 * sin(az)
+  yr <- x0 * sin(az) + y0 * cos(az)
+  list(
+    x = xr,
+    y = yr * cos(el) + z0 * sin(el),
+    depth = yr * sin(el) - z0 * cos(el)
+  )
+}
+
+# Single source of truth for the radiation colour ramp so that map surfaces and
+# colour bars can never disagree.  `rev = TRUE` puts pale yellow at the LOW end
+# and saturated dark red at the HIGH end; without it the ramp runs the other way
+# and high-radiation surfaces render near-white, which reads as washed out.
+radiation_palette <- function(n = 100L) {
+  # Drop the palest ~20% of the ramp.  The raw YlOrRd low end is almost white,
+  # which makes low-radiation surfaces blend into the page background and read
+  # as "transparent".  Starting at a visible cream keeps every surface opaque.
+  full <- grDevices::hcl.colors(round(n * 1.25), "YlOrRd", rev = TRUE)
+  full[(length(full) - n + 1L):length(full)]
+}
+
+radiation_value_cols <- function(values) {
+  values <- as.numeric(values)
+  if (length(values) == 0) {
+    return(character())
+  }
+  radiation_value_cols_range(values, range(values, na.rm = TRUE))
+}
+
+# Like radiation_value_cols but with a pre-supplied range so that the colour
+# scale is consistent across multiple calls (e.g. per-building rendering).
+radiation_value_cols_range <- function(values, value_range) {
+  cols   <- radiation_palette(100L)
+  values <- as.numeric(values)
+  if (length(values) == 0L) return(character(0L))
+  if (all(is.na(values))) return(rep(cols[1L], length(values)))
+  if (!is.finite(diff(value_range)) || diff(value_range) == 0) {
+    return(rep(cols[50L], length(values)))
+  }
+  idx <- round((values - value_range[1L]) / diff(value_range) * 99) + 1L
+  idx[is.na(idx)] <- 1L
+  cols[pmin(pmax(idx, 1L), 100L)]
 }
 
 sun_vector <- function(solar_pos) {

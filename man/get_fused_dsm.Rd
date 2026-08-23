@@ -8,7 +8,8 @@ get_fused_dsm(
   x = NULL,
   datasource_canopy_height = "metachm",
   min_tree_height = 2,
-  key = NULL,
+  resolution = NULL,
+  opentopo_key = NULL,
   quiet = TRUE
 )
 }
@@ -20,19 +21,29 @@ Currently supports \code{"metachm"}, \code{"ethCHM"}, or \code{NULL}.}
 
 \item{min_tree_height}{numeric. Minimum canopy height threshold in meters.}
 
-\item{key}{character. OpenTopography API key used to download DEM data.}
+\item{resolution}{numeric or \code{NULL}. Output raster resolution in meters. If
+\code{NULL} (default), the finest native resolution among the downloaded DEM
+and canopy height model is used, so the output is never silently degraded
+to the coarser of the two source rasters. Set explicitly (e.g. \code{1}) to
+force a finer grid than the native source data (e.g. when the DEM falls
+back to coarse SRTM data), or a coarser one to speed up large areas.}
+
+\item{opentopo_key}{character. OpenTopography API key used to download DEM data.}
 
 \item{quiet}{logical. If \code{TRUE}, suppress cli messages and progress output.
 Default is \code{TRUE}.}
 }
 \description{
 Generate digital surface model using multiple datasets, including building height map,
-canopy height map, and terrain model.
+canopy height map, and terrain model. Each building is given a single flat
+roof elevation (its own base ground elevation, sampled at its centroid,
+plus its height) rather than following the terrain slope beneath it pixel
+by pixel, so buildings on sloped ground do not come out tilted or warped.
 }
 \examples{
 \donttest{
  example <- gloBFPr::globfp_example
- dsm <- get_fused_dsm(x= example, key = 'key')
+ dsm <- get_fused_dsm(x= example, opentopo_key = 'key')
 }
 
 }

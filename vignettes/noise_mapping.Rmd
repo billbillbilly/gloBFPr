@@ -15,7 +15,7 @@ data. The same input pattern used by `svf()` is used here: pass building
 footprints as `x`, choose the height column with `height_field`, and supply
 canopy/DEM rasters directly or let the function retrieve them.
 
-```{r setup, message=FALSE}
+```{r setup, message=FALSE, eval=FALSE}
 library(gloBFPr)
 library(sf)
 library(terra)
@@ -24,7 +24,7 @@ library(terra)
 The package includes a small building layer and companion raster examples. For a
 real study area, replace this with `search_3dglobdf()`.
 
-```{r}
+```{r eval=FALSE}
 data(globfp_example)
 data(globfp_example_dem)
 data(globfp_example_canopy_height)
@@ -36,7 +36,7 @@ canopy_height <- rast(globfp_example_canopy_height)
 names(buildings)
 ```
 
-## Prepare Inputs
+## 1 Prepare Inputs
 
 By default, `prepare_noisemodelling_inputs()` and `get_noise_map()` download OSM
 roads from the bounding box of `x`. If measured traffic columns are not present,
@@ -64,10 +64,9 @@ or scenario comparisons, not calibrated regulatory maps.
 Use `prepare_noisemodelling_inputs()` when you want to inspect or export the
 layers before running the external NoiseModelling solver.
 
-```{r}
+```{r eval=FALSE}
 noise_inputs <- prepare_noisemodelling_inputs(
   x = buildings,
-  roads = roads,
   height_field = "Height",
   canopy_height = canopy_height,
   dem = dem,
@@ -104,49 +103,7 @@ noise_inputs <- prepare_noisemodelling_inputs(
 noise_inputs$gpkg
 ```
 
-## Building Population
-
-NoiseModelling receiver-generation scripts such as `Building_Grid` and
-`Building_Grid3D` can use an optional `POP` field in the `BUILDINGS` table to
-distribute inhabitants over building receivers. The default Delaunay map
-workflow does not yet use `POP` for exposure calculations, but
-`prepare_noisemodelling_inputs()` preserves it so the same building layer can be
-used in a later facade/exposure workflow.
-
-If your building layer already has population, name the field with
-`population_field`.
-
-```{r eval=FALSE}
-noise_inputs <- prepare_noisemodelling_inputs(
-  x = buildings,
-  roads = roads,
-  height_field = "Height",
-  population_field = "residents",
-  receiver = "grid",
-  resolution = 25
-)
-```
-
-If no population field is available, set `population = TRUE` to call
-the package population helper and allocate GHSL population to each building before preparing the
-NoiseModelling inputs.
-
-```{r eval=FALSE}
-noise_inputs <- prepare_noisemodelling_inputs(
-  x = buildings,
-  roads = roads,
-  height_field = "Height",
-  population = TRUE,
-  population_year = 2025,
-  receiver = "grid",
-  resolution = 25
-)
-```
-
-The resulting building layer contains `POP`, copied from an existing `POP`,
-`pop_total`, or `population_field` column, or created by the population helper.
-
-## Fetch Canopy, Greenspace, and DEM Internally
+### Fetch Canopy, Greenspace, and DEM Internally
 
 The noise functions can follow the same style as `svf()`: provide
 `datasource_canopy_height`, `datasource_greenspace`, and `key` instead of
@@ -160,24 +117,24 @@ noise_inputs <- prepare_noisemodelling_inputs(
   min_tree_height = 2,
   datasource_canopy_height = "metachm",
   datasource_greenspace = "esri",
-  key = Sys.getenv("OPENTOPOGRAPHY_KEY"),
+  opentopo_key = Sys.getenv("OPENTOPOGRAPHY_KEY"),
   receiver = "grid",
   resolution = 25,
   quiet = TRUE
 )
 ```
 
-`key` is only needed when DEM retrieval is requested. Canopy height is used to
+`opentopo_key` is only needed when DEM retrieval is requested. Canopy height is used to
 classify green ground absorption; it is not treated as a hard acoustic barrier.
 
-## Run NoiseModelling
+## 2 Run NoiseModelling
 
 `get_noise_map(run = TRUE)` runs the official headless NoiseModelling WPS
 scripts. This requires Java 11 or newer (11<=version<=17). The first run can download the
 headless NoiseModelling release into the R user cache, or you can preinstall it
 with `install_noisemodelling()`.
 
-```{r}
+```{r eval=FALSE}
 install_noisemodelling(version = "5.0.1")
 ```
 
@@ -195,9 +152,7 @@ noise_result <- get_noise_map(
   quiet = FALSE,
   java = 17
 )
-
-names(noise_result)
-plot_noise_map(noise_result, period = "DEN")
+plot_noise_map(noise_result, period = "DEN", scalebar = TRUE)
 ```
 
 ```{r eval=FALSE}
@@ -214,7 +169,7 @@ For production work, start with a building layer from `search_3dglobdf()` and
 replace OSM-inferred traffic with local speed and volume observations when
 available.
 
-## Advanced NoiseModelling Controls
+### Advanced NoiseModelling Controls
 
 `get_noise_map()` exposes the main acoustic controls used by
 `Noise_level_from_source.groovy`. The defaults are deliberately moderate for
@@ -244,6 +199,10 @@ noise_result <- get_noise_map(
   export_source_id = FALSE,
   frequency_field_prepend = "HZ"
 )
+```
+
+```{r eval=FALSE}
+plot_noise_map(noise_result, period = "DEN", scalebar = TRUE)
 ```
 
 Key controls:

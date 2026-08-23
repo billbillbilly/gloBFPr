@@ -1,0 +1,112 @@
+url: https://billbillbilly.github.io/gloBFPr/
+
+template:
+  bootstrap: 5
+  bslib:
+    primary: "#2c3e50"
+
+home:
+  title: "gloBFPr: Global Building Profile Analysis in R"
+  description: >
+    Automated access and analysis of multidimensional building profiles in
+    cities, using global 3D building footprint datasets.
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    articles:
+      text: Articles
+      menu:
+      - text: Acquiring building & environmental data
+        href: articles/data_acquisition.html
+      - text: Building metrics
+        href: articles/building_metrics.html
+      - text: Block-level analysis
+        href: articles/block_analysis.html
+      - text: Shadows and solar radiation
+        href: articles/shadow_radiation.html
+      - text: Urban noise mapping
+        href: articles/noise_mapping.html
+      - text: Urban wind & thermal CFD (OpenFOAM)
+        href: articles/wind_simulation.html
+
+reference:
+- title: Data acquisition
+  desc: >
+    Search, download, and retrieve global building footprint, elevation,
+    canopy height, and OpenStreetMap data.
+  contents:
+  - search_3dglobdf
+  - get_fused_dsm
+  - get_metadata
+  - install_noisemodelling
+
+- title: 3D scene export
+  desc: >
+    Export terrain, extruded buildings, and canopy trees as OBJ/STL models
+    for Rhino3D and Blender.
+  contents:
+  - get_3d_world
+
+- title: Building & environmental metrics
+  desc: >
+    Compute 2D/2.5D building morphology metrics and environmental context
+    indicators (greenery accessibility, neighbor exposure).
+  contents:
+  - get_metrics
+
+- title: Shadows and solar radiation
+  desc: Sky view factor, shadow footprints/heights, and surface radiation.
+  contents:
+  - get_shadows
+
+- title: Block-level analysis
+  desc: Aggregate and summarize building metrics at the city-block scale.
+  contents:
+  - generate_block
+  - aggregate_block
+
+- title: Urban noise mapping
+  desc: >
+    Prepare inputs for and run screening-level road-noise modelling inspired
+    by NoiseModelling workflows.
+  contents:
+  - osm_noise_traffic_defaults
+  - infer_osm_traffic
+  - prepare_noisemodelling_inputs
+  - get_noise_map
+  - plot_noise_map
+
+- title: Urban wind & thermal CFD (OpenFOAM)
+  desc: >
+    Prepare, run, and post-process pedestrian-level wind and nocturnal
+    thermal comfort simulations with OpenFOAM.
+  contents:
+  - get_era5_met
+  - prepare_openfoam_inputs
+  - prepare_openfoam_case
+  - prepare_nocturnal_case
+  - run_openfoam_docker
+  - sample_foam_slice
+  - read_foam_pedestrian_slice
+  - plot_foam_map
+  - add_flow_vectors
+
+- title: Example data
+  contents:
+  - globfp_example
+  - globfp_example_canopy_height
+  - globfp_example_dem
+
+articles:
+- title: Get started
+  navbar: ~
+  contents:
+  - data_acquisition
+  - building_metrics
+  - block_analysis
+  - shadow_radiation
+  - noise_mapping
+  - wind_simulation

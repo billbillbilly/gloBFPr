@@ -42,7 +42,7 @@ buildings <- search_3dglobdf(
 )
 ```
 
-## Morphological Metrics
+## 1 Morphological Metrics
 
 `get_morphology()` computes geometric and shape metrics such as footprint area,
 perimeter, volume, compactness, convexity, elongation, and pairwise distance.
@@ -67,7 +67,7 @@ basic_shape <- get_morphology(
 )
 ```
 
-## Neighbor Metrics
+## 2 Neighbor Metrics
 
 `get_neighbors()` estimates the number of neighboring buildings and centroid
 distance summaries using a fixed search radius and Voronoi adjacency.
@@ -92,63 +92,19 @@ neighborhood context.
 neighbors_100m <- get_neighbors(buildings, radius = 100, quiet = TRUE)
 ```
 
-## Population Density
-
-`get_pop_density()` downloads GHSL population tiles and extracts total
-population and population density at each building centroid. Set `distance` to
-aggregate population within a buffer around each building centroid. This step
-requires network access and can take time depending on the number of GHSL tiles
-intersecting the study area.
-
-```{r eval=FALSE}
-population <- get_pop_density(
-  neighbors,
-  year = 2025,
-  quiet = TRUE
-)
-
-population_500m <- get_pop_density(
-  neighbors,
-  year = 2025,
-  distance = 500,
-  quiet = TRUE
-)
-
-population |>
-  st_drop_geometry() |>
-  select(id, pop_total, pop_den) |>
-  head()
-```
-
-## Residential Classification
-
-`get_residential()` uses GHSL built-up surface data to estimate whether each
-building is residential. The `threshold` is the minimum residential built-up
-surface percentage in the matched GHSL cell.
-
-```{r eval=FALSE}
-residential <- get_residential(
-  population,
-  year = 2025,
-  threshold = 80,
-  quiet = TRUE
-)
-
-residential |>
-  st_drop_geometry() |>
-  select(id, res, res_pct, total_built_vals, res_vals, nres_vals) |>
-  head()
-```
-
-## Distance to Nearest Greenspace
+## 3 Distance to Nearest Greenspace
 
 `get_dng()` computes the distance from each building centroid to the nearest
 qualifying green patch within a buffer. The source can be `metachm`, `esri`, or
 `sentinel2`.
 
+By default the distance is measured in a straight line. Every result also
+carries a `dng_method` column recording how the value was obtained, which
+matters once network routing is switched on below.
+
 ```{r eval=FALSE}
 dng <- get_dng(
-  residential,
+  neighbors,
   datasource = "metachm",
   radius = 800,
   min_tree_height = 2,
@@ -159,7 +115,7 @@ dng <- get_dng(
 
 dng |>
   st_drop_geometry() |>
-  select(id, dng) |>
+  select(id, dng, dng_method) |>
   head()
 ```
 
@@ -177,7 +133,85 @@ dng_esri <- get_dng(
 )
 ```
 
-## Building Green View Index
+### Measuring Along Real Streets
+
+Straight-line distance ignores rivers, rail corridors, walls, and the simple
+fact that people walk on streets. Set `network = "osm"` to measure along real
+road and path centre lines instead. `get_dng()` downloads a walkable
+OpenStreetMap network for the study extent (motorways, trunk roads, and ways
+tagged `foot=no` are excluded), builds a routing graph, and reports
+
+    centroid to network  +  shortest path along network  +  network to green pixel
+
+```{r eval=FALSE}
+dng_net <- get_dng(
+  neighbors,
+  datasource = "metachm",
+  radius = 800,
+  min_area = 500,
+  unit = "m2",
+  network = "osm",
+  quiet = TRUE
+)
+
+dng_net |>
+  st_drop_geometry() |>
+  select(id, dng, dng_method) |>
+  head()
+```
+
+The network is downloaded once for the whole study area rather than once per
+building, so routing adds a single Overpass request regardless of how many
+buildings you pass in. If Overpass is unreachable or returns nothing,
+`get_dng()` warns and falls back to straight-line distance rather than failing.
+
+Supply your own lines when you need a specific network — a cleaned municipal
+sidewalk layer, a snapshot pinned to a particular date, or the same network you
+passed to `generate_block()`. Any `sf` line layer works, and it is reprojected
+for you.
+
+```{r eval=FALSE}
+# roads is an sf LINESTRING layer you already have
+dng_custom <- get_dng(
+  neighbors,
+  datasource = "metachm",
+  radius = 800,
+  min_area = 500,
+  unit = "m2",
+  network = roads,
+  quiet = TRUE
+)
+```
+
+`dng_method` tells you which measure each row actually used. A building falls
+back to `"euclidean"` when no path connects it to any green patch — typically
+an isolated network fragment, or a building whose buffer extends past the edge
+of the downloaded network. Check it before interpreting results, and compare
+the two measures to see where the street layout imposes a real detour:
+
+```{r eval=FALSE}
+table(dng_net$dng_method)
+
+comparison <- data.frame(
+  id        = dng$id,
+  euclidean = dng$dng,
+  network   = dng_net$dng
+)
+comparison$detour_ratio <- comparison$network / comparison$euclidean
+
+# Ratios near 1 mean the green space is straight ahead; large ratios flag
+# buildings cut off by barriers, dead ends, or missing crossings.
+head(comparison[order(-comparison$detour_ratio), ])
+```
+
+A few things to keep in mind. Distances are computed in the projected UTM CRS
+of your study area, so they are in metres. Green space is compared pixel by
+pixel, so a higher `zoom` gives a finer target set at the cost of runtime. And
+buildings connect to the graph at its vertices, so the network is densified to
+about 20 m spacing before routing — accurate enough for walking distances
+without inflating the graph.
+
+## 4 Building Green View Index
 
 `get_bgvi()` estimates Building Green View Index from building viewpoints. The
 DSM can include metaCHM canopy height, while the visible-green feature layer can
@@ -187,7 +221,7 @@ heavy; start with a small subset of buildings.
 
 ```{r eval=FALSE}
 bgvi <- get_bgvi(
-  buildings[1:3, ],
+  buildings[1:10, ],
   datasource_canopy_height = "metachm",
   datasource_greenspace = "esri",
   min_tree_height = 2,
@@ -264,7 +298,7 @@ bgvi_by_floor |>
   head()
 ```
 
-## A Complete Metric Pipeline
+## 5 A Complete Metric Pipeline
 
 For a typical analysis, build the result incrementally. Keep `quiet = TRUE` for
 batch workflows, or set it to `FALSE` when you want messages and progress bars.
@@ -273,13 +307,12 @@ batch workflows, or set it to `FALSE` when you want messages and progress bars.
 result <- buildings |>
   get_morphology(quiet = TRUE) |>
   get_neighbors(radius = 500, quiet = TRUE) |>
-  get_pop_density(year = 2025, quiet = TRUE) |>
-  get_residential(year = 2025, threshold = 80, quiet = TRUE) |>
   get_dng(
     datasource = "metachm",
     radius = 800,
     min_area = 500,
     unit = "m2",
+    network = "osm",
     quiet = TRUE
   )
 
@@ -288,9 +321,15 @@ metric_table <- result |>
   select(
     id, Height, g_area, vol, rec,
     n_count, m_ndist, min_ndist, max_ndist, sd_ndist,
-    pop_total, pop_den, res, res_pct,
-    dng
+    dng, dng_method
   )
 
 head(metric_table)
 ```
+
+Residential classification is not part of this per-building pipeline.
+`get_residential()` is internal and unstable (its output columns are still
+being redesigned) and is not exported. For residential context, use
+`aggregate_block(residential = TRUE)` after `generate_block()` to get a
+block-level residential proportion (`res_prop`) computed directly from GHS
+built-up surface rasters — see the block-level analysis article.

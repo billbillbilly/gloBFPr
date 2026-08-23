@@ -2,11 +2,31 @@
 % Please edit documentation in R/shadow_radiation.R
 \name{get_shadows}
 \alias{get_shadows}
+\alias{svf}
 \alias{get_shadow_footprint}
 \alias{get_shadow_height}
 \alias{get_radiation}
 \title{Building shadow and radiation calculations}
 \usage{
+svf(
+  x = NULL,
+  height_field = "Height",
+  min_tree_height = 2,
+  datasource_canopy_height = NULL,
+  key = NULL,
+  canopy_height = NULL,
+  dem = NULL,
+  raster_buffer = NULL,
+  grid_res = 2,
+  extent_buffer = NULL,
+  res_angle = 5,
+  observer_height = 1.7,
+  max_distance = NULL,
+  plot = FALSE,
+  quiet = TRUE,
+  ...
+)
+
 get_shadow_footprint(
   x = NULL,
   solar_time = NULL,
@@ -69,31 +89,21 @@ get_radiation(
   canopy_height = NULL,
   dem = NULL,
   grid_res = 2,
+  ground = FALSE,
+  ground_res = NULL,
   offset = 0.01,
-  radius = Inf,
+  radius = 500,
+  svf_res_angle = 15,
   return_list = FALSE,
   parallel = 1,
   plot = FALSE,
+  plot_3d = FALSE,
   quiet = TRUE,
   ...
 )
 }
 \arguments{
 \item{x}{An \code{sf} polygon object with building footprints and a height field.}
-
-\item{solar_time}{Character vector or list of character strings. Local solar
-times such as \code{"2026-06-21 15:00:00"}. If \code{solar_time} and \code{time_zone} are
-supplied, \code{azimuth} and \code{elevation} are ignored and solar position is
-estimated from time and the building-layer centroid.}
-
-\item{time_zone}{Character. A single time zone used to interpret
-\code{solar_time}, for example \code{"America/Denver"} or \code{"UTC"}.}
-
-\item{azimuth}{Numeric vector or list. Solar azimuth in decimal degrees,
-measured clockwise from north. Must have the same length as \code{elevation}.}
-
-\item{elevation}{Numeric vector or list. Solar elevation in decimal degrees
-above the horizon. Must have the same length as \code{azimuth}.}
 
 \item{height_field}{Character. Name of the building height column. Defaults to
 \code{"Height"}, matching \code{\link[=search_3dglobdf]{search_3dglobdf()}} output.}
@@ -119,20 +129,25 @@ and shadow-height outputs are returned above local ground.}
 buildings used when retrieving CHM/DEM internally. If \code{NULL}, a buffer is
 estimated from building height and solar elevation.}
 
-\item{b}{Numeric buffer tolerance used when cleaning footprint unions.}
+\item{grid_res}{Numeric surface-grid resolution in CRS units.}
 
-\item{overlap_shadow}{Logical. For \code{get_shadow_footprint()}, if \code{TRUE},
-dissolve overlapping shadows across all supplied solar positions by shadow
-source.}
+\item{extent_buffer}{Optional numeric buffer around \code{x} used when creating an
+automatic \code{terra::SpatRaster} template. If omitted, a buffer is estimated
+from building heights and solar elevation.}
+
+\item{res_angle}{Numeric. Azimuth sampling interval in decimal degrees for
+\code{svf()}. Smaller values are slower and more detailed.}
+
+\item{observer_height}{Numeric. Height above local ground for SVF query
+locations. Defaults to \code{1.7}, representing pedestrian eye level.}
+
+\item{max_distance}{Numeric. Maximum obstacle search distance in CRS units
+for \code{svf()}.}
 
 \item{plot}{Logical. For \code{get_shadow_footprint()}, draw a base R map of the
 building footprints and shadow polygons before returning the \code{sf} result.
 For \code{get_radiation()}, draw a base R map of radiation sample points colored
 by \code{total}.}
-
-\item{plot_overlap_gradient}{Logical. For \code{get_shadow_footprint()} plots with
-multiple \code{solar_time} values, if \code{TRUE}, draw all shadows in transparent
-gray so overlapping areas appear darker.}
 
 \item{quiet}{Logical. If \code{FALSE}, emit progress messages.}
 
@@ -140,15 +155,35 @@ gray so overlapping areas appear darker.}
 alias of \code{shadow_locations}; \code{solar_pos}, \code{time}, and \code{combine} are accepted
 as deprecated aliases.}
 
+\item{solar_time}{Character vector or list of character strings. Local solar
+times such as \code{"2026-06-21 15:00:00"}. If \code{solar_time} and \code{time_zone} are
+supplied, \code{azimuth} and \code{elevation} are ignored and solar position is
+estimated from time and the building-layer centroid.}
+
+\item{time_zone}{Character. A single time zone used to interpret
+\code{solar_time}, for example \code{"America/Denver"} or \code{"UTC"}.}
+
+\item{azimuth}{Numeric vector or list. Solar azimuth in decimal degrees,
+measured clockwise from north. Must have the same length as \code{elevation}.}
+
+\item{elevation}{Numeric vector or list. Solar elevation in decimal degrees
+above the horizon. Must have the same length as \code{azimuth}.}
+
+\item{b}{Numeric buffer tolerance used when cleaning footprint unions.}
+
+\item{overlap_shadow}{Logical. For \code{get_shadow_footprint()}, if \code{TRUE},
+dissolve overlapping shadows across all supplied solar positions by shadow
+source.}
+
+\item{plot_overlap_gradient}{Logical. For \code{get_shadow_footprint()} plots with
+multiple \code{solar_time} values, if \code{TRUE}, draw all shadows in transparent
+gray so overlapping areas appear darker.}
+
 \item{shadow_locations}{Optional query locations for shadow height, as an
 \code{sf} point layer or a \code{terra::SpatRaster}.}
 
 \item{cell_size}{Numeric cell resolution in CRS units when
 \code{shadow_locations} is omitted.}
-
-\item{extent_buffer}{Optional numeric buffer around \code{x} used when creating an
-automatic \code{terra::SpatRaster} template. If omitted, a buffer is estimated
-from building heights and solar elevation.}
 
 \item{parallel}{Ignored. Kept for API compatibility.}
 
@@ -156,7 +191,7 @@ from building heights and solar elevation.}
 height calculations.}
 
 \item{grid}{Optional 3D \code{sf} point surface grid. If omitted, it is created
-from building roofs and facades.}
+from building roofs and facades (and optionally the ground).}
 
 \item{solar_normal}{Direct Normal Irradiance vector, one value per solar
 position.}
@@ -167,14 +202,32 @@ position.}
 \item{canopy_transmissivity}{Numeric from 0 to 1. Fraction of direct
 irradiance transmitted through canopy shadows in \code{get_radiation()}.}
 
-\item{grid_res}{Numeric surface-grid resolution in CRS units.}
+\item{ground}{Logical. If \code{TRUE}, add a regular grid of ground-level sample
+points over the study-area bounding box (excluding building footprints).
+Ground points have an upward normal and receive direct radiation whenever
+they are not in a building or canopy shadow, and diffuse radiation scaled
+by their Sky View Factor. Returned rows have \code{surface = "ground"} and
+\code{building_id = NA}.}
+
+\item{ground_res}{Numeric resolution for the ground sample grid in CRS
+units. If \code{NULL}, defaults to \code{grid_res}.}
 
 \item{offset}{Numeric vertical offset added to generated surface-grid points.}
 
-\item{radius}{Ignored. Kept for API compatibility.}
+\item{radius}{Maximum obstacle search distance in CRS units for radiation
+Sky View Factor calculations. Defaults to \code{500}. Obstacles beyond this
+distance contribute negligibly to Sky View Factor but dominate runtime,
+so a finite radius enables spatial culling and is typically many times
+faster. Use \code{Inf} to consider all obstacles regardless of distance.}
+
+\item{svf_res_angle}{Numeric. Azimuth sampling interval in decimal degrees
+used when estimating Sky View Factor inside \code{get_radiation()}.}
 
 \item{return_list}{Logical. If \code{TRUE}, return per-timestep radiation matrices
 instead of a summed \code{sf} surface grid.}
+
+\item{plot_3d}{Logical. For \code{get_radiation()}, draw a base R 3D-style view
+with separate panels for direct, diffuse, and total radiation.}
 }
 \value{
 \code{get_shadow_footprint()} returns an \code{sf} polygon layer.
@@ -184,8 +237,13 @@ a numeric matrix for point locations.
 
 \code{get_radiation()} returns an \code{sf} point layer with \code{svf}, \code{direct},
 \code{diffuse}, and \code{total} columns, unless \code{return_list = TRUE}.
+
+\code{svf()} returns a \code{terra::SpatRaster} with Sky View Factor values from 0 to 1.
 }
 \description{
+\code{svf()} computes a Sky View Factor raster from building and optional canopy
+obstacles.
+
 \code{get_shadow_footprint()} computes ground shadow footprints for extruded
 building polygons.
 

@@ -76,8 +76,20 @@ polygons, binary presence rasters, and height-coded rasters.
 The downloading process may take some time, depending on the number and size
 of building footprint tiles.
 
-This implementation relies on the current structure of the dataset as hosted on Figshare.
+This implementation for gloBFP-3D relies on the current structure of the dataset as hosted on Figshare.
 It may break if the dataset owner changes the file organization or metadata format.
+
+The server of GlobalBuildingAtlas may have issues sometimes, so users may need to
+switch over to gloBFP-3D, which means using \code{data_source="GBF"}
+
+When using \code{data_source = "GBA"}, the GlobalBuildingAtlas dataset does not
+provide unique identifiers for individual building parcels. As a result, the
+\code{group_id} assigned to overlapping or fragmented polygons may not accurately
+reflect true building boundaries in all cases. This limitation may affect
+morphological analyses at the individual building level (e.g., footprint area,
+perimeter, building-level height statistics). However, the data remains suitable
+for environmental simulation purposes such as noise mapping, solar radiation
+analysis, and wind flow modelling, where parcel-level identity is less critical.
 }
 \examples{
 buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639))

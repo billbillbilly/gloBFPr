@@ -1,10 +1,10 @@
 testthat::test_that("runs correctly", {
-  res_pop <- gloBFPr::get_pop_density(year = 2025)
+  res_pop <- gloBFPr:::get_pop(year = 2025)
   res_morphology <- gloBFPr::get_morphology()
   res_neighbors <- gloBFPr::get_neighbors()
   res_dng <- gloBFPr::get_dng()
-  res_residential <- gloBFPr::get_residential()
-  res_residential_missing_year <- gloBFPr::get_residential(gloBFPr::globfp_example)
+  res_residential <- gloBFPr:::get_residential()
+  res_residential_missing_year <- gloBFPr:::get_residential(gloBFPr::globfp_example)
 
   testthat::expect_type(res_pop, "NULL")
   testthat::expect_type(res_morphology, "NULL")
@@ -96,41 +96,30 @@ testthat::test_that("get_morphology treats group_id features as one building", {
   testthat::expect_equal(result$group_id, c(1, 1, 2))
 })
 
-testthat::test_that("get_pop_density extracts through GHSL helper", {
+testthat::test_that("get_pop allocates cell population by building volume", {
   make_square <- function(xmin, ymin, xmax, ymax) {
     sf::st_polygon(list(matrix(
-      c(xmin, ymin,
-        xmin, ymax,
-        xmax, ymax,
-        xmax, ymin,
-        xmin, ymin),
-      ncol = 2,
-      byrow = TRUE
+      c(xmin, ymin, xmin, ymax, xmax, ymax, xmax, ymin, xmin, ymin),
+      ncol = 2, byrow = TRUE
     )))
   }
-
   buildings <- sf::st_sf(
-    id = seq_len(2),
-    Height = c(10, 20),
+    id = seq_len(2), Height = c(10, 20),
     geometry = sf::st_sfc(
       make_square(3.0000, 0.0000, 3.0002, 0.0002),
       make_square(3.0004, 0.0000, 3.0006, 0.0002),
       crs = 4326
     )
   )
-
   captured_points <- NULL
-  captured_polygons <- NULL
   mocked_get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL,
                                 polygons = NULL, quiet = FALSE) {
     captured_points <<- points
-    captured_polygons <<- polygons
     testthat::expect_equal(year, 2025)
     testthat::expect_true(quiet)
-    n <- if (!is.null(points)) nrow(points) else nrow(polygons)
-    list(pop_total = rep(2500, n), pop_den = rep(0.25, n))
+    testthat::expect_null(polygons)
+    list(pop_total = c(300, 300), cell_id = c("tile:1", "tile:1"))
   }
-
   namespace <- asNamespace("gloBFPr")
   old_get_GHSpop <- get("get_GHSpop", envir = namespace)
   unlockBinding("get_GHSpop", namespace)
@@ -141,53 +130,32 @@ testthat::test_that("get_pop_density extracts through GHSL helper", {
     assign("get_GHSpop", old_get_GHSpop, envir = namespace)
     lockBinding("get_GHSpop", namespace)
   }, add = TRUE)
-
-  result <- gloBFPr::get_pop_density(buildings, year = 2025, quiet = TRUE)
-
+  result <- gloBFPr:::get_pop(buildings, year = 2025, quiet = TRUE)
   testthat::expect_s3_class(captured_points, "sf")
-  testthat::expect_null(captured_polygons)
-  testthat::expect_equal(result$pop_total, c(2500, 2500))
-  testthat::expect_equal(result$pop_den, c(0.25, 0.25))
-
-  buffered <- gloBFPr::get_pop_density(buildings, year = 2025, distance = 100, quiet = TRUE)
-
-  testthat::expect_s3_class(captured_polygons, "sf")
-  testthat::expect_equal(buffered$pop_total, c(2500, 2500))
-  testthat::expect_equal(buffered$pop_den, c(0.25, 0.25))
+  testthat::expect_equal(result$pop_total, c(100, 200), tolerance = 1e-6)
+  testthat::expect_false("pop_den" %in% names(result))
 })
 
-testthat::test_that("get_pop_density copies group results back to features", {
+testthat::test_that("get_pop treats group_id features as one building", {
   make_square <- function(xmin, ymin, xmax, ymax) {
     sf::st_polygon(list(matrix(
-      c(xmin, ymin,
-        xmin, ymax,
-        xmax, ymax,
-        xmax, ymin,
-        xmin, ymin),
-      ncol = 2,
-      byrow = TRUE
+      c(xmin, ymin, xmin, ymax, xmax, ymax, xmax, ymin, xmin, ymin),
+      ncol = 2, byrow = TRUE
     )))
   }
-
   buildings <- sf::st_sf(
-    id = seq_len(3),
-    group_id = c(1, 1, 2),
-    Height = c(10, 20, 8),
+    id = seq_len(3), group_id = c(1, 1, 2), Height = c(10, 20, 8),
     geometry = sf::st_sfc(
-      make_square(3.0000, 0.0000, 3.0002, 0.0002),
-      make_square(3.0002, 0.0000, 3.0004, 0.0002),
-      make_square(3.0010, 0.0000, 3.0012, 0.0002),
-      crs = 4326
+      make_square(0, 0, 10, 10), make_square(10, 0, 20, 10), make_square(40, 0, 50, 10),
+      crs = 3857
     )
   )
-
   mocked_get_GHSpop <- function(bbox = NULL, year = NULL, points = NULL,
                                 polygons = NULL, quiet = FALSE) {
     n <- if (!is.null(points)) nrow(points) else nrow(polygons)
     testthat::expect_equal(n, 2)
-    list(pop_total = c(100, 200), pop_den = c(0.1, 0.2))
+    list(pop_total = c(380, 380), cell_id = c("tile:1", "tile:1"))
   }
-
   namespace <- asNamespace("gloBFPr")
   old_get_GHSpop <- get("get_GHSpop", envir = namespace)
   unlockBinding("get_GHSpop", namespace)
@@ -198,11 +166,23 @@ testthat::test_that("get_pop_density copies group results back to features", {
     assign("get_GHSpop", old_get_GHSpop, envir = namespace)
     lockBinding("get_GHSpop", namespace)
   }, add = TRUE)
+  result <- gloBFPr:::get_pop(buildings, year = 2025, quiet = TRUE)
+  testthat::expect_equal(result$pop_total, c(300, 300, 80), tolerance = 1e-6)
+  testthat::expect_false("pop_den" %in% names(result))
+})
 
-  result <- gloBFPr::get_pop_density(buildings, year = 2025, quiet = TRUE)
-
-  testthat::expect_equal(result$pop_total, c(100, 100, 200))
-  testthat::expect_equal(result$pop_den, c(0.1, 0.1, 0.2))
+testthat::test_that("population allocation falls back from volume to area", {
+  allocate_population_cpp <- gloBFPr:::allocate_population_cpp
+  area_weighted <- allocate_population_cpp(
+    pop_total = c(120, 120), cell_group = c(1L, 1L),
+    volume = c(0, NA_real_), area = c(10, 30)
+  )
+  testthat::expect_equal(area_weighted, c(30, 90))
+  equal_weighted <- allocate_population_cpp(
+    pop_total = c(90, 90, 90), cell_group = c(1L, 1L, 1L),
+    volume = c(0, NA_real_, 0), area = c(0, NA_real_, 0)
+  )
+  testthat::expect_equal(equal_weighted, c(30, 30, 30))
 })
 
 testthat::test_that("get_residential classifies by residential percentage", {
@@ -269,7 +249,7 @@ testthat::test_that("get_residential classifies by residential percentage", {
     lockBinding("get_GHSres", namespace)
   }, add = TRUE)
 
-  result <- gloBFPr::get_residential(buildings, year = 2025, threshold = 70)
+  result <- gloBFPr:::get_residential(buildings, year = 2025, threshold = 70)
 
   testthat::expect_equal(result$total_built_vals, c(100, 100, 0, NA))
   testthat::expect_equal(result$nres_vals, c(20, 30, 0, NA))
@@ -441,6 +421,208 @@ testthat::test_that("get_dng copies group distance back to features", {
   testthat::expect_true(is.finite(result$dng[1]))
 })
 
+testthat::test_that("build_network_graph nodes shared intersections and weights edges", {
+  build_network_graph <- gloBFPr:::build_network_graph
+  network_distance_to_targets <- gloBFPr:::network_distance_to_targets
+
+  # Two ways meeting at (100, 0): an L-shaped street 200 m long end to end.
+  roads <- sf::st_sf(
+    id = seq_len(2),
+    geometry = sf::st_sfc(
+      sf::st_linestring(matrix(c(0, 0, 100, 0), ncol = 2, byrow = TRUE)),
+      sf::st_linestring(matrix(c(100, 0, 100, 100), ncol = 2, byrow = TRUE)),
+      crs = 32617
+    )
+  )
+
+  # max_segment = Inf keeps the raw vertices so the node count is predictable.
+  g <- build_network_graph(roads, max_segment = Inf)
+  testthat::expect_equal(igraph::vcount(g$graph), 3L)
+  testthat::expect_equal(igraph::ecount(g$graph), 2L)
+  testthat::expect_equal(sum(igraph::E(g$graph)$weight), 200)
+
+  # Origin sits 5 m off one end, target 5 m off the other: 5 + 200 + 5.
+  routed <- network_distance_to_targets(
+    g,
+    matrix(c(0, -5), ncol = 2),
+    matrix(c(105, 100), ncol = 2)
+  )
+  testthat::expect_equal(routed$distance, 210)
+  testthat::expect_equal(routed$index, 1L)
+})
+
+testthat::test_that("network routing picks the network-nearest, not the euclid-nearest, patch", {
+  build_network_graph <- gloBFPr:::build_network_graph
+  network_distance_to_targets <- gloBFPr:::network_distance_to_targets
+
+  roads <- sf::st_sf(
+    id = 1,
+    geometry = sf::st_sfc(
+      sf::st_linestring(matrix(c(0, 0, 100, 0, 100, 100), ncol = 2, byrow = TRUE)),
+      crs = 32617
+    )
+  )
+  g <- build_network_graph(roads, max_segment = Inf)
+
+  # Target 1 is a long way round the L; target 2 is further as the crow flies
+  # but sits directly on the street.
+  targets <- matrix(c(105, 100,
+                      50, 0), ncol = 2, byrow = TRUE)
+  routed <- network_distance_to_targets(g, matrix(c(0, -5), ncol = 2), targets)
+
+  testthat::expect_equal(routed$index, 2L)
+  testthat::expect_equal(routed$distance, 55)
+})
+
+testthat::test_that("get_dng routes along a supplied network and flags the method", {
+  make_square <- function(xmin, ymin, xmax, ymax) {
+    sf::st_polygon(list(matrix(
+      c(xmin, ymin,
+        xmin, ymax,
+        xmax, ymax,
+        xmax, ymin,
+        xmin, ymin),
+      ncol = 2,
+      byrow = TRUE
+    )))
+  }
+
+  building <- sf::st_sf(
+    id = 1,
+    Height = 10,
+    geometry = sf::st_sfc(make_square(3.0000, 0.0000, 3.0002, 0.0002), crs = 4326)
+  )
+
+  # Green pixel 40 m due east of the building centroid.
+  mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
+                                    zoom = 17, year = NULL, min_tree_height = 2) {
+    buffer_vect <- terra::vect(buffer)
+    template <- terra::rast(
+      ext = terra::ext(buffer_vect),
+      resolution = 20,
+      crs = sf::st_crs(buffer)$wkt
+    )
+    terra::values(template) <- 0
+    centroid <- sf::st_coordinates(suppressWarnings(sf::st_centroid(buffer)))
+    green_xy <- matrix(c(centroid[1, "X"] + 40, centroid[1, "Y"]), ncol = 2)
+    template[terra::cellFromXY(template, green_xy)] <- 1
+    template
+  }
+
+  namespace <- asNamespace("gloBFPr")
+  old_get_greenspace <- get("get_greenspace", envir = namespace)
+  unlockBinding("get_greenspace", namespace)
+  assign("get_greenspace", mocked_get_greenspace, envir = namespace)
+  lockBinding("get_greenspace", namespace)
+  on.exit({
+    unlockBinding("get_greenspace", namespace)
+    assign("get_greenspace", old_get_greenspace, envir = namespace)
+    lockBinding("get_greenspace", namespace)
+  }, add = TRUE)
+
+  utm_crs <- gloBFPr:::get_utm_crs(gloBFPr:::get_bbox(building))
+  centroid <- sf::st_coordinates(
+    suppressWarnings(sf::st_centroid(sf::st_transform(building, utm_crs)))
+  )
+
+  # A detour street: north 60 m, east 100 m, back south 60 m. Any route to the
+  # green pixel must go the long way round, so the network distance has to
+  # exceed the 40 m straight-line distance.
+  detour <- sf::st_sf(
+    id = 1,
+    geometry = sf::st_sfc(
+      sf::st_linestring(matrix(
+        c(centroid[1, "X"],       centroid[1, "Y"],
+          centroid[1, "X"],       centroid[1, "Y"] + 60,
+          centroid[1, "X"] + 100, centroid[1, "Y"] + 60,
+          centroid[1, "X"] + 100, centroid[1, "Y"]),
+        ncol = 2, byrow = TRUE
+      )),
+      crs = utm_crs
+    )
+  )
+
+  euclid <- gloBFPr::get_dng(
+    building, datasource = "metachm", radius = 100, min_area = 1
+  )
+  routed <- gloBFPr::get_dng(
+    building, datasource = "metachm", radius = 100, min_area = 1,
+    network = detour, quiet = TRUE
+  )
+
+  testthat::expect_equal(euclid$dng_method, "euclidean")
+  testthat::expect_equal(routed$dng_method, "network")
+  testthat::expect_gt(routed$dng, euclid$dng)
+})
+
+testthat::test_that("get_dng falls back to euclidean when the network is unusable", {
+  make_square <- function(xmin, ymin, xmax, ymax) {
+    sf::st_polygon(list(matrix(
+      c(xmin, ymin,
+        xmin, ymax,
+        xmax, ymax,
+        xmax, ymin,
+        xmin, ymin),
+      ncol = 2,
+      byrow = TRUE
+    )))
+  }
+
+  building <- sf::st_sf(
+    id = 1,
+    Height = 10,
+    geometry = sf::st_sfc(make_square(3.0000, 0.0000, 3.0002, 0.0002), crs = 4326)
+  )
+
+  mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
+                                    zoom = 17, year = NULL, min_tree_height = 2) {
+    buffer_vect <- terra::vect(buffer)
+    template <- terra::rast(
+      ext = terra::ext(buffer_vect),
+      resolution = 20,
+      crs = sf::st_crs(buffer)$wkt
+    )
+    terra::values(template) <- 0
+    centroid <- sf::st_coordinates(suppressWarnings(sf::st_centroid(buffer)))
+    green_xy <- matrix(c(centroid[1, "X"] + 40, centroid[1, "Y"]), ncol = 2)
+    template[terra::cellFromXY(template, green_xy)] <- 1
+    template
+  }
+
+  namespace <- asNamespace("gloBFPr")
+  old_get_greenspace <- get("get_greenspace", envir = namespace)
+  unlockBinding("get_greenspace", namespace)
+  assign("get_greenspace", mocked_get_greenspace, envir = namespace)
+  lockBinding("get_greenspace", namespace)
+  on.exit({
+    unlockBinding("get_greenspace", namespace)
+    assign("get_greenspace", old_get_greenspace, envir = namespace)
+    lockBinding("get_greenspace", namespace)
+  }, add = TRUE)
+
+  utm_crs <- gloBFPr:::get_utm_crs(gloBFPr:::get_bbox(building))
+  empty_net <- sf::st_sf(
+    id = integer(0),
+    geometry = sf::st_sfc(crs = utm_crs)
+  )
+
+  result <- gloBFPr::get_dng(
+    building, datasource = "metachm", radius = 100, min_area = 1,
+    network = empty_net, quiet = TRUE
+  )
+
+  testthat::expect_equal(result$dng_method, "euclidean")
+  testthat::expect_true(is.finite(result$dng))
+
+  testthat::expect_error(
+    gloBFPr::get_dng(
+      building, datasource = "metachm", radius = 100, min_area = 1,
+      network = 42, quiet = TRUE
+    ),
+    "must be NULL"
+  )
+})
+
 testthat::test_that("get_greenspace metachm returns the binary CHM raster", {
   bbox <- sf::st_as_sfc(sf::st_bbox(
     c(xmin = 3.0000, ymin = 0.0000, xmax = 3.0002, ymax = 0.0002),
@@ -547,9 +729,14 @@ testthat::test_that("get_bgvi flattens target building and samples floors", {
       stop("Target building footprint was not flattened.")
     }
     value <- height / 100
-    if (is.null(directions)) return(value)
+    green_area <- value * 500
+    if (is.null(directions)) return(list(gvi = value, green_area = green_area))
     directional_offsets <- seq_along(directions) / 1000
-    stats::setNames(c(value, value + directional_offsets), c("overall", directions))
+    directional <- lapply(seq_along(directions), function(i) {
+      list(gvi = value + directional_offsets[i], green_area = green_area)
+    })
+    names(directional) <- directions
+    c(list(overall = list(gvi = value, green_area = green_area)), directional)
   }
 
   namespace <- asNamespace("gloBFPr")
@@ -601,6 +788,10 @@ testthat::test_that("get_bgvi flattens target building and samples floors", {
   testthat::expect_equal(result$min_gvi, min(expected_gvis))
   testthat::expect_equal(result$max_gvi, max(expected_gvis))
   testthat::expect_equal(result$sd_gvi, stats::sd(expected_gvis))
+  testthat::expect_equal(result$bottom_green_area, 1.7 / 100 * 500, tolerance = 1e-6)
+  testthat::expect_equal(result$top_green_area, 28.7 / 100 * 500, tolerance = 1e-6)
+  expected_green_areas <- c(1.7, 13.7, 25.7, 28.7) / 100 * 500
+  testthat::expect_equal(result$mean_green_area, mean(expected_green_areas), tolerance = 1e-6)
   greenspace_only <- gloBFPr::get_bgvi(
     building,
     datasource_canopy_height = NULL,
