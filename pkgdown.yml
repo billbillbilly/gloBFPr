@@ -1,0 +1,14 @@
+pandoc: 3.7.0.2
+pkgdown: 2.2.0
+pkgdown_sha: ~
+articles:
+  block_analysis: block_analysis.html
+  building_metrics: building_metrics.html
+  data_acquisition: data_acquisition.html
+  noise_mapping: noise_mapping.html
+  shadow_radiation: shadow_radiation.html
+  wind_simulation: wind_simulation.html
+last_built: 2026-09-04T15:52Z
+urls:
+  reference: https://billbillbilly.github.io/gloBFPr/reference
+  article: https://billbillbilly.github.io/gloBFPr/articles
