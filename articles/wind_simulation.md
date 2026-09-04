@@ -1,6 +1,7 @@
 # Urban Wind CFD with gloBFPr and OpenFOAM
 
 ``` r
+
 library(gloBFPr)
 library(sf)
 library(terra)
@@ -17,6 +18,7 @@ The package ships with a small Detroit-area dataset. No API keys are
 needed.
 
 ``` r
+
 data(globfp_example)
 buildings_list <- list(poly = globfp_example, binary = NULL, graduated = NULL)
 foam_case <- file.path(path.expand("~"), "openfoam_quickstart")
@@ -77,6 +79,7 @@ folder:
 | Ground roughness (z0) | `rasters/ground_roughness_z0.tif` | Wall roughness |
 
 ``` r
+
 foam_inputs <- prepare_openfoam_inputs(
   case_dir            = "~/openfoam_cases/detroit",
   bbox                = c(-83.065644, 42.333792, -83.045217, 42.346988),
@@ -110,6 +113,7 @@ they must exist; explicitly supplied but unreadable inputs stop the case
 setup instead of being skipped.
 
 ``` r
+
 geo <- prepare_foam_geometry(
   case_dir        = foam_inputs$case_dir,
   fused_dsm       = foam_inputs$files$fused_dsm,
@@ -185,6 +189,7 @@ annual maps for before-and-after comparisons:
 > handled as canopy drag instead.
 
 ``` r
+
 z0_rast <- rast(foam_inputs$files$roughness_raster)
 z0_mean <- global(z0_rast, "mean", na.rm = TRUE)[[1]]
 cat(sprintf("Mean z0 = %.4f m\n", z0_mean))
@@ -201,11 +206,13 @@ reference temperature that switches buoyancy off.
 copy your personal access token, then store it:
 
 ``` r
+
 # Add to ~/.Renviron so it loads automatically every session
 CDS_API_KEY=your-token-here
 ```
 
 ``` r
+
 # Daytime — fetches 10-m wind components and 2-m temperature
 met <- get_era5_met(
   lon      = -83.05,
@@ -224,6 +231,7 @@ met <- get_era5_met(
 ### 3.1 Write the case
 
 ``` r
+
 case_files <- prepare_foam_case(
   case_dir            = foam_inputs$case_dir,
   # geo$building_stl when you ran Section 2.2, otherwise the flat-ground STL
@@ -258,6 +266,7 @@ lateral role from the sign of `dot(flowDir, outward_normal)`. A
 south-westerly gives two inlets and two outlets:
 
 ``` r
+
 prepare_foam_case(..., inlet_velocity = c(3, 3, 0))
 #> Wind: 4.24 m/s at 10 m, dir (0.707 0.707)
 #> patches: xMin=inlet xMax=outlet yMin=inlet yMax=outlet
@@ -273,6 +282,7 @@ prepare_foam_case(..., inlet_velocity = c(3, 3, 0))
 ### 3.2 Run via Docker
 
 ``` r
+
 run_openfoam_docker(
   case_dir = foam_inputs$case_dir,
   image    = "opencfd/openfoam-run:2506",
@@ -283,6 +293,7 @@ run_openfoam_docker(
 ### 3.3 Visualise
 
 ``` r
+
 maps <- read_foam_pedestrian_slice(
   case_dir       = foam_inputs$case_dir,
   T_ref          = case_files$params$T_ref,
@@ -343,6 +354,7 @@ velocity layers carry information.
 > can re-sample without re-running the simulation:
 >
 > ``` r
+>
 > slice <- sample_foam_slice(case_dir = foam_inputs$case_dir,
 >                            fields = c("U", "p_rgh"), z = 10,
 >                            image = "opencfd/openfoam-run:2506", resolution = 5)

@@ -26,6 +26,7 @@ the vignette can run without downloading external data.
     layer.
 
 ``` r
+
 library(gloBFPr)
 library(sf)
 library(terra)
@@ -40,6 +41,7 @@ The package includes a small `sf` example dataset with building
 footprints, unique IDs, and building heights.
 
 ``` r
+
 data(globfp_example)
 data(globfp_example_dem)
 data(globfp_example_canopy_height)
@@ -65,6 +67,7 @@ manual `azimuth` and `elevation` values instead. Azimuth is measured
 clockwise from north, and elevation is measured above the horizon.
 
 ``` r
+
 solar_time <- "2026-06-21 15:00:00"
 time_zone <- "America/Detroit"
 
@@ -79,6 +82,7 @@ returns an `sf` polygon layer containing one shadow footprint for each
 building.
 
 ``` r
+
 shadow_footprints <- get_shadow_footprint(
   buildings,
   solar_time = solar_time,
@@ -93,6 +97,7 @@ values. When `plot_overlap_gradient = TRUE`, the plot uses transparent
 gray shadows so overlapping shadow areas appear darker.
 
 ``` r
+
 solar_times <- data.frame(
   sun_id = c("morning", "midday", "afternoon"),
   solar_time = c(
@@ -119,6 +124,7 @@ footprint. This is useful for seeing the total ground area affected by
 all supplied solar positions.
 
 ``` r
+
 combined_shadow_footprints <- get_shadow_footprint(
   buildings,
   solar_time = solar_times$solar_time,
@@ -139,6 +145,7 @@ template to compute a gridded shadow-height surface. If
 creates a template automatically.
 
 ``` r
+
 template <- rast(
   xmin = st_bbox(shadow_footprints)[["xmin"]],
   xmax = st_bbox(shadow_footprints)[["xmax"]],
@@ -173,6 +180,7 @@ functions can retrieve them internally. Canopy height currently supports
 requires an OpenTopography API key.
 
 ``` r
+
 shadow_height_with_downloaded_trees <- get_shadow_height(
   buildings,
   shadow_locations = template,
@@ -199,6 +207,7 @@ radiation_with_downloaded_trees <- get_radiation(
 ```
 
 ``` r
+
 plot(dem, main = "Sample DEM")
 plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
 plot(canopy_height, main = "Canopy height")
@@ -210,6 +219,7 @@ The same
 call can now include tree canopy.
 
 ``` r
+
 shadow_footprints_with_trees <- get_shadow_footprint(
   buildings,
   solar_time = solar_time,
@@ -223,6 +233,7 @@ shadow_footprints_with_trees <- get_shadow_footprint(
 ```
 
 ``` r
+
 shadow_height_with_trees <- get_shadow_height(
   buildings,
   shadow_locations = template,
@@ -265,6 +276,7 @@ color gradient:
 |      2      |              ~5              |
 
 ``` r
+
 radiation <- get_radiation(
   buildings,
   solar_time = solar_time,
@@ -286,6 +298,7 @@ head(st_drop_geometry(radiation))
 > several hours:
 >
 > ``` r
+>
 > solar_day <- format(
 >   seq(as.POSIXct("2026-06-21 07:00", tz = time_zone),
 >       as.POSIXct("2026-06-21 19:00", tz = time_zone),
@@ -310,6 +323,7 @@ To include tree shade, pass a canopy height map and optionally a DEM.
 the canopy; `0` is fully opaque and `1` has no effect.
 
 ``` r
+
 radiation_with_trees <- get_radiation(
   buildings,
   solar_time = solar_time,
@@ -331,6 +345,7 @@ radiation_with_trees <- get_radiation(
 Compare mean roof radiation with and without tree canopy:
 
 ``` r
+
 roof_building_only <- aggregate(
   total ~ building_id,
   data = st_drop_geometry(radiation[radiation$surface == "roof", ]),
@@ -358,6 +373,7 @@ one-to-one and the difference can be computed directly. Negative values
 mean tree shade reduced radiation at that sample point.
 
 ``` r
+
 radiation_diff <- radiation
 radiation_diff$direct_diff <- radiation_with_trees$direct - radiation$direct
 radiation_diff$total_diff  <- radiation_with_trees$total  - radiation$total
@@ -375,6 +391,7 @@ symmetric breaks so blue always means reduction and red means increase,
 regardless of the asymmetric range.
 
 ``` r
+
 diff_pal <- hcl.colors(100, "Blue-Red 3")
 max_abs  <- max(abs(radiation_diff$total_diff), na.rm = TRUE)
 diff_breaks <- cut(radiation_diff$total_diff,
@@ -400,6 +417,7 @@ work directly. Roof and facade points are most readable when shown
 separately.
 
 ``` r
+
 roof_radiation   <- radiation[radiation$surface == "roof",   ]
 facade_radiation <- radiation[radiation$surface == "facade", ]
 
@@ -417,6 +435,7 @@ produces more spatial variation in the direct component — surfaces that
 spend more time in sunlight receive proportionally higher totals.
 
 ``` r
+
 solar_day <- c(
   "2026-06-21 08:00:00",
   "2026-06-21 11:00:00",
@@ -437,6 +456,7 @@ radiation_day <- get_radiation(
 ```
 
 ``` r
+
 roof_day   <- radiation_day[radiation_day$surface == "roof",   ]
 facade_day <- radiation_day[radiation_day$surface == "facade", ]
 
@@ -476,6 +496,7 @@ they receive:
 radiation map but takes longer to compute.
 
 ``` r
+
 radiation_ground <- get_radiation(
   buildings,
   solar_time    = c("2026-06-21 08:00:00", "2026-06-21 11:00:00",
@@ -496,6 +517,7 @@ facade, and roof total radiation. The maps share one W/m² color bar.
 Separate the ground layer for further analysis:
 
 ``` r
+
 ground_rad <- radiation_ground[radiation_ground$surface == "ground", ]
 
 summary(st_drop_geometry(ground_rad[, c("svf", "direct", "diffuse", "total")]))
@@ -509,6 +531,7 @@ Passing a canopy height map attenuates shaded samples using
 also plots the canopy impact as `canopy - no_canopy` total radiation.
 
 ``` r
+
 radiation_ground_trees <- get_radiation(
   buildings,
   solar_time    = c("2026-06-21 08:00:00", "2026-06-21 11:00:00",
@@ -529,6 +552,7 @@ radiation_ground_trees <- get_radiation(
 ```
 
 ``` r
+
 ground_trees <- radiation_ground_trees[
   radiation_ground_trees$surface == "ground", ]
 
@@ -542,6 +566,7 @@ Combining ground and roof radiation in one call lets you compare solar
 exposure across all horizontal surfaces at once:
 
 ``` r
+
 roof_ground <- radiation_ground[radiation_ground$surface %in% c("roof", "ground"), ]
 
 aggregate(

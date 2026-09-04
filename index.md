@@ -39,6 +39,7 @@ gloBFPr](reference/figures/cover.png)
 Install the development version:
 
 ``` r
+
 # Install devtools if needed
 install.packages("devtools")
 
@@ -229,12 +230,14 @@ you are downloading manually.
 1.  Load
 
 ``` r
+
 library(gloBFPr)
 ```
 
 2.  Search and download data by bounding box
 
 ``` r
+
 bbox <- c(-83.065644,42.333792,-83.045217,42.346988)
 buildings_list <- search_3dglobdf(bbox = bbox, 
                                   out_type = "all", 
@@ -310,6 +313,7 @@ cases for OpenFOAM and runs them through Docker.
 gloBFPr](reference/figures/wind_speed_direction.png)
 
 ``` r
+
 data(globfp_example)
 buildings_list <- list(poly = globfp_example, binary = NULL, graduated = NULL)
 
@@ -355,6 +359,7 @@ headless NoiseModelling workflow.
 gloBFPr](reference/figures/noise_advance.png)
 
 ``` r
+
 noise <- get_noise_map(
   x        = buildings_list$poly,
   run      = FALSE,
@@ -373,6 +378,7 @@ gloBFPr](reference/figures/mesh_sample.jpg)
 ![Voxel 3D export from gloBFPr](reference/figures/voxel_sample.jpg)
 
 ``` r
+
 library(gloBFPr)
 
 data(globfp_example)

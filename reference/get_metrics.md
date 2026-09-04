@@ -375,7 +375,7 @@ greenery visibility. Sustainable Cities and Society, 111, 105518.
 library(gloBFPr)
 data(globfp_example)
 result <- gloBFPr::get_morphology(globfp_example[c(1:3),], quiet = TRUE)
-#> Linking to GEOS 3.13.0, GDAL 3.8.5, PROJ 9.5.1; sf_use_s2() is TRUE
+#> Linking to GEOS 3.12.1, GDAL 3.8.4, PROJ 9.4.0; sf_use_s2() is TRUE
 
 result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
 #>   |                                                                              |                                                                      |   0%  |                                                                              |=======================                                               |  33%  |                                                                              |===============================================                       |  67%  |                                                                              |======================================================================| 100%

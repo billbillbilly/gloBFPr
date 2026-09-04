@@ -14,6 +14,7 @@ analysis in gloBFPr:
   rolls building-level metrics up to the block level.
 
 ``` r
+
 library(gloBFPr)
 library(sf)
 library(dplyr)
@@ -23,6 +24,7 @@ The package includes a small building footprint layer with heights. We
 use it throughout this vignette.
 
 ``` r
+
 data(globfp_example)
 buildings <- globfp_example
 ```
@@ -49,6 +51,7 @@ to fetch from OpenStreetMap via the Overpass API instead, which requires
 the `osmdata` package.
 
 ``` r
+
 block_result <- generate_block(buildings, quiet = FALSE)
 ```
 
@@ -57,6 +60,7 @@ with one row per block and a `block_id` column. `$buildings` is the
 input layer with `block_id` appended.
 
 ``` r
+
 blocks    <- block_result$blocks
 buildings <- block_result$buildings
 
@@ -71,6 +75,7 @@ Supply a pre-downloaded network to skip any remote fetch, which is
 useful for offline workflows or when you have a pre-processed network.
 
 ``` r
+
 library(osmdata)
 net <- opq(bbox = sf::st_bbox(buildings)) |>
   add_osm_feature("highway",
@@ -101,6 +106,7 @@ or narrow the affected road classes and adjust the overlap threshold if
 your data requires it.
 
 ``` r
+
 # Include primary roads in dual-carriageway simplification
 block_result <- generate_block(
   buildings,
@@ -114,6 +120,7 @@ To disable dual carriageway simplification entirely, pass an empty
 character vector.
 
 ``` r
+
 block_result <- generate_block(
   buildings,
   dc_highway_types = character(0),
@@ -132,6 +139,7 @@ Increase the value in areas with very fine-grained street grids;
 decrease it for historic centres with small medieval blocks.
 
 ``` r
+
 block_result <- generate_block(
   buildings,
   min_block_area = 1000,
@@ -154,6 +162,7 @@ it is useful to compute building-level metrics first so they are
 available for aggregation.
 
 ``` r
+
 # Compute building metrics, then generate blocks
 buildings_with_metrics <- buildings |>
   get_morphology(quiet = TRUE)
@@ -192,6 +201,7 @@ Override the default for any column by passing a named list to `.fns`.
 The names must match column names in `$buildings`.
 
 ``` r
+
 # Use maximum volume instead of sum; use median height instead of mean
 block_metrics_custom <- aggregate_block(
   block_result,
@@ -209,6 +219,7 @@ the overlap area, giving the total resident count per block. Use
 `population_year` to select the GHSL epoch (1975–2030, default `2025`).
 
 ``` r
+
 block_metrics <- aggregate_block(
   block_result,
   population      = TRUE,
@@ -235,6 +246,7 @@ residential by the GHS built-up surface layer. Use `residential_year` to
 select the GHS epoch (default `2020`).
 
 ``` r
+
 block_metrics <- aggregate_block(
   block_result,
   residential      = TRUE,
@@ -265,6 +277,7 @@ high-volume, or high-population blocks cluster in expected parts of the
 study area.
 
 ``` r
+
 library(ggplot2)
 
 ggplot(block_metrics) +
@@ -287,6 +300,7 @@ urban blocks easier to compare because a few very large blocks can
 otherwise dominate the color range.
 
 ``` r
+
 ggplot(block_metrics) +
   geom_sf(aes(fill = n_buildings), color = "grey85", linewidth = 0.1) +
   scale_fill_viridis_c(
@@ -321,6 +335,7 @@ When population or residential proportion has been requested, the same
 pattern can be used for demographic or land-use indicators:
 
 ``` r
+
 ggplot(block_metrics) +
   geom_sf(aes(fill = pop_total), color = "white", linewidth = 0.1) +
   scale_fill_viridis_c(
@@ -356,6 +371,7 @@ block-level metric back to the building layer and draw buildings over
 the block polygons.
 
 ``` r
+
 buildings_for_map <- block_result$buildings |>
   left_join(
     block_metrics |>
@@ -393,6 +409,7 @@ the block geometry, color scale, and map framing consistent across
 metrics.
 
 ``` r
+
 metric_labels <- c(
   coverage_ratio = "Coverage ratio",
   n_buildings = "Building count",
@@ -429,6 +446,7 @@ The typical workflow is to fetch buildings, compute building-level
 metrics, and then generate and summarize blocks in sequence.
 
 ``` r
+
 bbox <- c(-83.065644, 42.333792, -83.045217, 42.346988)
 
 # 1. Retrieve building footprints

@@ -8,6 +8,7 @@ the same `sf` object with additional metric columns, so the usual
 workflow is to pipe or reassign the result step by step.
 
 ``` r
+
 library(gloBFPr)
 library(sf)
 library(dplyr)
@@ -19,6 +20,7 @@ The package includes a small `sf` example dataset with building
 footprints, unique IDs, and building heights.
 
 ``` r
+
 data(globfp_example)
 
 buildings <- globfp_example
@@ -34,6 +36,7 @@ For your own area of interest, first retrieve building footprints with
 then pass the returned polygon layer to the metric functions.
 
 ``` r
+
 buildings <- search_3dglobdf(
   bbox = c(-83.065644, 42.333792, -83.045217, 42.346988),
   out_type = "poly",
@@ -48,6 +51,7 @@ computes geometric and shape metrics such as footprint area, perimeter,
 volume, compactness, convexity, elongation, and pairwise distance.
 
 ``` r
+
 morphology <- get_morphology(buildings, quiet = TRUE)
 
 morphology |>
@@ -60,6 +64,7 @@ You can also request only a subset of metrics when you do not need the
 full set.
 
 ``` r
+
 basic_shape <- get_morphology(
   buildings,
   metrics = c("g_area", "pmeter", "vol", "rec"),
@@ -74,6 +79,7 @@ estimates the number of neighboring buildings and centroid distance
 summaries using a fixed search radius and Voronoi adjacency.
 
 ``` r
+
 neighbors <- get_neighbors(
   morphology,
   radius = 500,
@@ -90,6 +96,7 @@ Use a smaller radius for dense local context or a larger radius for
 broader neighborhood context.
 
 ``` r
+
 neighbors_100m <- get_neighbors(buildings, radius = 100, quiet = TRUE)
 ```
 
@@ -105,6 +112,7 @@ also carries a `dng_method` column recording how the value was obtained,
 which matters once network routing is switched on below.
 
 ``` r
+
 dng <- get_dng(
   neighbors,
   datasource = "metachm",
@@ -124,6 +132,7 @@ dng |>
 For a 2D greenery mask source, use `esri` or `sentinel2`.
 
 ``` r
+
 dng_esri <- get_dng(
   buildings,
   datasource = "esri",
@@ -148,6 +157,7 @@ a routing graph, and reports
     centroid to network  +  shortest path along network  +  network to green pixel
 
 ``` r
+
 dng_net <- get_dng(
   neighbors,
   datasource = "metachm",
@@ -178,6 +188,7 @@ same network you passed to
 Any `sf` line layer works, and it is reprojected for you.
 
 ``` r
+
 # roads is an sf LINESTRING layer you already have
 dng_custom <- get_dng(
   neighbors,
@@ -198,6 +209,7 @@ interpreting results, and compare the two measures to see where the
 street layout imposes a real detour:
 
 ``` r
+
 table(dng_net$dng_method)
 
 comparison <- data.frame(
@@ -229,6 +241,7 @@ union of both. An OpenTopography API key is required for the DEM. This
 can be computationally heavy; start with a small subset of buildings.
 
 ``` r
+
 bgvi <- get_bgvi(
   buildings[1:10, ],
   datasource_canopy_height = "metachm",
@@ -251,6 +264,7 @@ To compute BGVI with a DSM built only from buildings and DEM, set
 `datasource_canopy_height = NULL` and provide a 2D greenspace source.
 
 ``` r
+
 bgvi_2d_green <- get_bgvi(
   buildings[1:3, ],
   datasource_canopy_height = NULL,
@@ -268,6 +282,7 @@ of view in degrees. The function reuses each computed viewshed and
 filters visible greenery by direction.
 
 ``` r
+
 bgvi_directional <- get_bgvi(
   buildings[1:3, ],
   datasource_canopy_height = "metachm",
@@ -295,6 +310,7 @@ but computes a single viewpoint and returns the diagnostic rasters
 invisibly when `plot = TRUE`.
 
 ``` r
+
 top_direction_view <- plot_bgvi_viewshed(
   buildings,
   building = 195,
@@ -313,6 +329,7 @@ You can also inspect a specific floor or supply an observer height
 directly.
 
 ``` r
+
 fifth_floor_view <- plot_bgvi_viewshed(
   buildings,
   building = 1,
@@ -335,6 +352,7 @@ every `n` floors and reduce runtime. The top estimated floor is always
 included.
 
 ``` r
+
 bgvi_by_floor <- get_bgvi(
   buildings[1:3, ],
   datasource_canopy_height = "metachm",
@@ -359,6 +377,7 @@ For a typical analysis, build the result incrementally. Keep
 messages and progress bars.
 
 ``` r
+
 result <- buildings |>
   get_morphology(quiet = TRUE) |>
   get_neighbors(radius = 500, quiet = TRUE) |>

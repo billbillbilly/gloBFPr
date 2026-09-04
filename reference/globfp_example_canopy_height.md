@@ -27,13 +27,13 @@ metaCHM canopy height data via dsmSearch, downloaded for the
 data(globfp_example_canopy_height)
 canopy_height <- terra::rast(globfp_example_canopy_height)
 canopy_height
-#> class       : SpatRaster 
+#> class       : SpatRaster
 #> size        : 99, 106, 1  (nrow, ncol, nlyr)
 #> resolution  : 17.65165, 17.65165  (x, y)
 #> extent      : 329783.1, 331654.1, 4688653, 4690401  (xmin, xmax, ymin, ymax)
-#> coord. ref. : WGS 84 / UTM zone 17N (EPSG:32617) 
+#> coord. ref. : WGS 84 / UTM zone 17N (EPSG:32617)
 #> source(s)   : memory
-#> name        : canopy_height 
-#> min value   :             0 
-#> max value   :            31 
+#> name        : canopy_height
+#> min value   :             0
+#> max value   :            31
 ```

@@ -11,6 +11,7 @@ with `height_field`, and supply canopy/DEM rasters directly or let the
 function retrieve them.
 
 ``` r
+
 library(gloBFPr)
 library(sf)
 library(terra)
@@ -21,6 +22,7 @@ examples. For a real study area, replace this with
 [`search_3dglobdf()`](https://billbillbilly.github.io/gloBFPr/reference/search_3dglobdf.md).
 
 ``` r
+
 data(globfp_example)
 data(globfp_example_dem)
 data(globfp_example_canopy_height)
@@ -45,6 +47,7 @@ fills screening-level speed and traffic assumptions from the OSM
 `highway` class.
 
 ``` r
+
 noise_inputs <- prepare_noisemodelling_inputs(
   x = buildings,
   height_field = "Height",
@@ -69,6 +72,7 @@ when you want to inspect or export the layers before running the
 external NoiseModelling solver.
 
 ``` r
+
 noise_inputs <- prepare_noisemodelling_inputs(
   x = buildings,
   height_field = "Height",
@@ -95,6 +99,7 @@ The prepared object contains:
 You can write a GeoPackage for inspection.
 
 ``` r
+
 noise_inputs <- prepare_noisemodelling_inputs(
   x = buildings,
   roads = roads,
@@ -117,6 +122,7 @@ instead of supplying rasters. Roads are downloaded internally from the
 building extent unless you pass `roads` explicitly.
 
 ``` r
+
 noise_inputs <- prepare_noisemodelling_inputs(
   x = buildings,
   height_field = "Height",
@@ -143,10 +149,12 @@ user cache, or you can preinstall it with
 [`install_noisemodelling()`](https://billbillbilly.github.io/gloBFPr/reference/install_noisemodelling.md).
 
 ``` r
+
 install_noisemodelling(version = "5.0.1")
 ```
 
 ``` r
+
 noise_result <- get_noise_map(
   x = buildings,
   height_field = "Height",
@@ -164,6 +172,7 @@ plot_noise_map(noise_result, period = "DEN", scalebar = TRUE)
 ```
 
 ``` r
+
 plot_noise_map(noise_result, period = "DEN")
 ```
 
@@ -188,6 +197,7 @@ for screening maps; increasing propagation distance, reflection order,
 diffraction, or ray export can make the run much slower.
 
 ``` r
+
 noise_result <- get_noise_map(
   x = buildings,
   height_field = "Height",
@@ -213,6 +223,7 @@ noise_result <- get_noise_map(
 ```
 
 ``` r
+
 plot_noise_map(noise_result, period = "DEN", scalebar = TRUE)
 ```
 
@@ -262,6 +273,7 @@ You can download a regional `.osm.pbf` extract directly in R.
 provider such as Geofabrik:
 
 ``` r
+
 install.packages("osmextract")
 
 osm_file <- osmextract::oe_get(
@@ -275,6 +287,7 @@ osm_file <- osmextract::oe_get(
 You can also download a known extract URL with base R:
 
 ``` r
+
 osm_file <- file.path(tempdir(), "michigan-latest.osm.pbf")
 
 utils::download.file(
@@ -285,6 +298,7 @@ utils::download.file(
 ```
 
 ``` r
+
 noise_result <- get_noise_map(
   x = buildings,
   height_field = "Height",

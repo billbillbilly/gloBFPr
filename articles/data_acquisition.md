@@ -12,6 +12,7 @@ resolution, ensuring detailed spatial representation of building
 geometries within the defined area of interest.
 
 ``` r
+
 buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
                                            out_type = "all", 
                                            cell_size = 1)
@@ -21,6 +22,7 @@ Setting `mask = TRUE` ensures the height raster is masked by the
 building footprints.
 
 ``` r
+
 buildings_rast <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
                                            out_type = "graduated_rast", 
                                            mask = TRUE, 
@@ -31,6 +33,7 @@ Setting `data_source = "GBA"` to get building data from
 GlobalBuildingAtlas.
 
 ``` r
+
 buildings_gba <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
                                            out_type = "poly", 
                                            data_source = "GBA")
@@ -49,6 +52,7 @@ This requires a free OpenTopography API key for the DEM download (see
 the “API keys” section of the package README for how to request one).
 
 ``` r
+
 dsm <- gloBFPr::get_fused_dsm(
   x = buildings_list$poly,
   datasource_canopy_height = "metachm",
@@ -64,6 +68,7 @@ Set `datasource_canopy_height = NULL` to build the DSM from terrain and
 buildings only, skipping the canopy height download.
 
 ``` r
+
 dsm_no_canopy <- gloBFPr::get_fused_dsm(
   x = buildings_list$poly,
   datasource_canopy_height = NULL,
@@ -82,6 +87,7 @@ shadow, wind, or viewshed analysis — or a coarser one to speed up large
 study areas.
 
 ``` r
+
 dsm_1m <- gloBFPr::get_fused_dsm(
   x = buildings_list$poly,
   datasource_canopy_height = "metachm",
@@ -94,6 +100,7 @@ Set `min_tree_height` to control the minimum canopy height (in meters)
 treated as tree cover rather than noise.
 
 ``` r
+
 dsm_with_canopy <- gloBFPr::get_fused_dsm(
   x = buildings_list$poly,
   datasource_canopy_height = "metachm",
@@ -129,6 +136,7 @@ streets, lawns, and water — written as Wavefront OBJ and binary STL
 files that load directly in Rhino3D and Blender.
 
 ``` r
+
 library(gloBFPr)
 library(sf)
 library(terra)
@@ -143,6 +151,7 @@ The fastest way to get a model is flat mode — no terrain download, no
 API key. We use the bundled example footprints.
 
 ``` r
+
 out_dir <- file.path(tempdir(), "world_flat")
 world <- get_3d_world(
   x       = buildings,
@@ -158,6 +167,7 @@ list.files(out_dir)
     ## [4] "world.obj"
 
 ``` r
+
 world$n_buildings
 ```
 
@@ -180,6 +190,7 @@ The package ships a DEM and a canopy height raster for the same extent
 as `globfp_example`, so no API key or elevation download is needed:
 
 ``` r
+
 data(globfp_example_dem)
 data(globfp_example_canopy_height)
 
@@ -230,6 +241,7 @@ Minecraft worlds — stepped terrain, quantized building columns, voxel
 trees, and block-painted streets, lawns, and water:
 
 ``` r
+
 world_vox <- get_3d_world(
   x              = buildings,
   terrain        = TRUE,
