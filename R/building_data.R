@@ -236,7 +236,7 @@ search_3dglobdf <- function(bbox=NULL,
 #' @param quiet logical. If `TRUE`, suppress cli messages and progress output.
 #' Default is `TRUE`.
 #' @examples
-#' \donttest{
+#' \dontrun{
 #'  example <- gloBFPr::globfp_example
 #'  dsm <- get_fused_dsm(x= example, opentopo_key = 'key')
 #' }

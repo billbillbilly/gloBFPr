@@ -270,7 +270,7 @@ data(globfp_example)
 result <- gloBFPr::get_morphology(globfp_example[c(1:3),], quiet = TRUE)
 
 result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
-\donttest{
+\dontrun{
 result <- gloBFPr::get_bgvi(globfp_example[c(1:3),],
                             datasource_canopy_height = "metachm",
                             datasource_greenspace = "esri",

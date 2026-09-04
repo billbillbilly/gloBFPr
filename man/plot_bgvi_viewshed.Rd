@@ -82,7 +82,7 @@ diagnostic layers for a single building instead of summary columns for every
 building.
 }
 \examples{
-\donttest{
+\dontrun{
 result <- plot_bgvi_viewshed(
   globfp_example,
   building = 1,

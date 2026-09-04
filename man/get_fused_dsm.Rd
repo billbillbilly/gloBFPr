@@ -44,7 +44,7 @@ plus its height) rather than following the terrain slope beneath it pixel
 by pixel, so buildings on sloped ground do not come out tilted or warped.
 }
 \examples{
-\donttest{
+\dontrun{
  example <- gloBFPr::globfp_example
  dsm <- get_fused_dsm(x= example, opentopo_key = 'key')
 }

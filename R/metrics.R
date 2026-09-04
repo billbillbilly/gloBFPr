@@ -599,7 +599,7 @@ get_neighbors <- function(x = NULL, radius = 500, quiet = FALSE) {
 #'
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' result <- gloBFPr::get_bgvi(globfp_example[c(1:3),],
 #'                             datasource_canopy_height = "metachm",
 #'                             datasource_greenspace = "esri",
@@ -868,7 +868,7 @@ get_bgvi <- function(x = NULL,
 #'   `dsm`, and `binary_green`.
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' result <- plot_bgvi_viewshed(
 #'   globfp_example,
 #'   building = 1,
