@@ -1,0 +1,78 @@
+* using log directory '/Users/yangxiaohao/gloBFPr/..Rcheck'
+* using R version 4.5.2 (2025-10-31)
+* using platform: aarch64-apple-darwin20
+* R was compiled by
+    Apple clang version 16.0.0 (clang-1600.0.26.6)
+    GNU Fortran (GCC) 14.2.0
+* running under: macOS Sonoma 14.5
+* using session charset: ASCII
+* using options '--no-manual --no-build-vignettes'
+* checking for file './DESCRIPTION' ... OK
+* checking extension type ... Package
+* this is package 'gloBFPr' version '2.0.0'
+* package encoding: UTF-8
+* checking package namespace information ... OK
+* checking package dependencies ... OK
+* checking if this is a source package ... WARNING
+Subdirectory 'gloBFPr/src' contains apparent object files/libraries
+  RcppExports.o allocate_population.o gloBFPr.so
+  mean_pairwise_distance.o nearest_green.o shadow_radiation.o
+Object files/libraries should not be included in a source package.
+* checking if there is a namespace ... OK
+* checking for executable files ... OK
+* checking for hidden files and directories ... NOTE
+Found the following hidden files and directories:
+  .DS_Store
+  .Rhistory
+  .github/.gitignore
+  .gitignore
+  images/.DS_Store
+  ..Rcheck
+  .Rproj.user
+  .git
+  .github
+These were most likely included in error. See section 'Package
+structure' in the 'Writing R Extensions' manual.
+* checking for portable file names ... ERROR
+Found the following non-portable file paths:
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/01e0d9c1d6f0ab78a210ad76a9df0d77928dee2427e38be4935041d74d9b69d8/3e112e51d5fd6619133c5d2c6a84594c77c7c5c730bd42700b34bb1c3d9859f8/1788369403737/4efaa085-9182-41e2-adaa-f6192914af70
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/0372b6caff72a74e678bbee03411921656ad5dd4bc92240b6bcc2ddb5eac0c35/fcebc105d1f105fdbbfdc3a6c61380b73985b0eb70d576b7d859b243d7e367ce/1787958607096/985a8b65-9669-425c-9996-f66021d5ee4a
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/5428ca14ff797f6d9f5424806a9242ee9d09dec1d3d0018c929500282813c68a/9f3160827e46828430e54660f0671fa1b7b74bfd239f8e5ef3aa896ed6b93d80/1788492857296/2030c49f-0fd5-4a4e-9270-2a9681d11ed2
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/6999c4c37e64b250bd354a884cb8891d1205964d3b40766a2bbe1f3124fffced/e251574c15a6fefdf44eed3b8b9e3ae9e6102c872b7f038a220acf7663d354d2/1788162984387/1abcbe20-abe4-4c23-a9b0-28af709ea0b9
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/d79c351d5bb56cd2e502a01dbcf62aaaff05e03d5bf2d57cb9640700d7bd33e9/a6ef025084e048ea31932d69901368875fe48d6b9964eca90e823f34ed662513/1788207940274/6379c3e6-0344-449a-bd4a-c1beff2ac87b
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/01e0d9c1d6f0ab78a210ad76a9df0d77928dee2427e38be4935041d74d9b69d8/3e112e51d5fd6619133c5d2c6a84594c77c7c5c730bd42700b34bb1c3d9859f8/1788369403737
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/0372b6caff72a74e678bbee03411921656ad5dd4bc92240b6bcc2ddb5eac0c35/fcebc105d1f105fdbbfdc3a6c61380b73985b0eb70d576b7d859b243d7e367ce/1787958607096
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/5428ca14ff797f6d9f5424806a9242ee9d09dec1d3d0018c929500282813c68a/9f3160827e46828430e54660f0671fa1b7b74bfd239f8e5ef3aa896ed6b93d80/1788492857296
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/6999c4c37e64b250bd354a884cb8891d1205964d3b40766a2bbe1f3124fffced/e251574c15a6fefdf44eed3b8b9e3ae9e6102c872b7f038a220acf7663d354d2/1788162984387
+  gloBFPr/.git/refs/codex/turn-diffs/checkpoints/d79c351d5bb56cd2e502a01dbcf62aaaff05e03d5bf2d57cb9640700d7bd33e9/a6ef025084e048ea31932d69901368875fe48d6b9964eca90e823f34ed662513/1788207940274
+
+Tarballs are only required to store paths of up to 100 bytes and cannot
+store those of more than 256 bytes, with restrictions including to 100
+bytes for the final component.
+See section 'Package structure' in the 'Writing R Extensions' manual.
+ OK
+* checking for sufficient/correct file permissions ... OK
+* checking whether package 'gloBFPr' can be installed ... OK
+* used C++ compiler: 'Apple clang version 15.0.0 (clang-1500.3.9.4)'
+* used SDK: 'MacOSX14.5.sdk'
+* checking installed package size ... INFO
+  installed size is  8.3Mb
+  sub-directories of 1Mb or more:
+    help   7.2Mb
+* checking package directory ... OK
+* checking DESCRIPTION meta-information ... WARNING
+During startup - Warning messages:
+1: Setting LC_CTYPE failed, using "C" 
+2: Setting LC_COLLATE failed, using "C" 
+3: Setting LC_TIME failed, using "C" 
+4: Setting LC_MESSAGES failed, using "C" 
+5: Setting LC_MONETARY failed, using "C" 
+ ERROR
+During startup - Warning messages:
+1: Setting LC_CTYPE failed, using "C" 
+2: Setting LC_COLLATE failed, using "C" 
+3: Setting LC_TIME failed, using "C" 
+4: Setting LC_MESSAGES failed, using "C" 
+5: Setting LC_MONETARY failed, using "C" 
+* DONE
+Status: 2 ERRORs, 2 WARNINGs, 1 NOTE

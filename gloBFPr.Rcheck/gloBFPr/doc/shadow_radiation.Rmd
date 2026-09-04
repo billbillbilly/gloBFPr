@@ -1,0 +1,537 @@
+---
+title: "Building Shadows and Radiation with gloBFPr"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{Building Shadows and Radiation with gloBFPr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Analyze Building Shadows and Radiation
+
+This vignette demonstrates how to compute building shadow footprints, shadow
+height, and surface radiation with `sf` and `terra` objects. The examples use a
+small synthetic building layer (sampled in Detroit) so the vignette can run without downloading
+external data.
+
+## 1 Workflow Summary
+
+1. Prepare an `sf` building polygon layer with a numeric `Height` column.
+2. Define `solar_time` and `time_zone` so the functions estimate solar
+   position from the building-layer centroid.
+3. Use `get_shadow_footprint()` for shadow polygons.
+4. Use `get_shadow_height()` with a `terra::SpatRaster`.
+5. Use `get_radiation()` to sample roof and facade radiation and visualize the
+   returned `sf` layer.
+   
+
+```{r setup, message=FALSE}
+library(gloBFPr)
+library(sf)
+library(terra)
+```
+
+The shadow and radiation functions expect an `sf` polygon layer with a numeric
+height column. Building data returned by `search_3dglobdf()` already uses the
+`Height` field, so the same default works here.
+
+The package includes a small `sf` example dataset with building footprints,
+unique IDs, and building heights.
+
+```{r eval=FALSE}
+data(globfp_example)
+data(globfp_example_dem)
+data(globfp_example_canopy_height)
+
+buildings <- globfp_example
+# buildings <- buildings[seq_len(min(10, nrow(buildings))), ]
+dem <- rast(globfp_example_dem)
+canopy_height <- rast(globfp_example_canopy_height)
+```
+
+For your own area of interest, first retrieve building footprints with
+`search_3dglobdf()`, then pass the returned polygon layer to the metric
+functions.
+
+## 2 Solar Position
+
+Start with `solar_time` and `time_zone`. The functions estimate sun azimuth and
+elevation from the time and the centroid of the building layer.
+
+If you already have solar geometry from another source, you can use manual
+`azimuth` and `elevation` values instead. Azimuth is measured clockwise from
+north, and elevation is measured above the horizon.
+
+```{r eval=FALSE}
+solar_time <- "2026-06-21 15:00:00"
+time_zone <- "America/Detroit"
+
+azimuth <- 135
+elevation <- 35
+```
+
+## 3 Shadow Footprints
+
+`get_shadow_footprint()` returns an `sf` polygon layer containing one shadow
+footprint for each building.
+
+```{r eval=FALSE}
+shadow_footprints <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  plot = TRUE,
+  quiet = TRUE
+)
+```
+
+To compare shadows from multiple times, pass a vector of `solar_time` values.
+When `plot_overlap_gradient = TRUE`, the plot uses transparent gray shadows so
+overlapping shadow areas appear darker.
+
+```{r eval=FALSE}
+solar_times <- data.frame(
+  sun_id = c("morning", "midday", "afternoon"),
+  solar_time = c(
+    "2026-06-21 09:00:00",
+    "2026-06-21 12:00:00",
+    "2026-06-21 16:00:00"
+  )
+)
+
+multi_shadow_footprints <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_times$solar_time,
+  time_zone = time_zone,
+  plot = TRUE,
+  plot_overlap_gradient = TRUE,
+  quiet = TRUE
+)
+
+unique(multi_shadow_footprints$sun_id)
+```
+
+Set `overlap_shadow = TRUE` when you want a dissolved cumulative shadow footprint. This
+is useful for seeing the total ground area affected by all supplied solar
+positions.
+
+```{r eval=FALSE}
+combined_shadow_footprints <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_times$solar_time,
+  time_zone = time_zone,
+  overlap_shadow = TRUE,
+  plot = TRUE,
+  quiet = TRUE
+)
+```
+
+## 4 Shadow Height as a Terra Surface
+
+Pass a `terra::SpatRaster` template to compute a gridded shadow-height surface.
+If `shadow_locations = NULL`, `get_shadow_height()` creates a template automatically.
+
+```{r eval=FALSE}
+template <- rast(
+  xmin = st_bbox(shadow_footprints)[["xmin"]],
+  xmax = st_bbox(shadow_footprints)[["xmax"]],
+  ymin = st_bbox(shadow_footprints)[["ymin"]],
+  ymax = st_bbox(shadow_footprints)[["ymax"]],
+  resolution = 4,
+  crs = st_crs(buildings)$wkt
+)
+
+shadow_height_surface <- get_shadow_height(
+  buildings,
+  shadow_locations = template,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  quiet = TRUE
+)
+
+plot(shadow_height_surface, main = "Shadow height")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+```
+
+## 5 Tree Canopy and Terrain
+
+Tree canopy can be included as an additional shadow obstacle by passing a
+canopy height map. If you also provide a DEM, the function compares canopy and
+building shadows in absolute elevation and returns shadow heights above local
+ground.
+
+If you do not already have these rasters, the shadow and radiation functions can
+retrieve them internally. Canopy height currently supports `datasource_canopy_height =
+"metachm"` or `"ethCHM"`, and DEM retrieval requires an OpenTopography API key.
+
+```{r eval=FALSE}
+shadow_height_with_downloaded_trees <- get_shadow_height(
+  buildings,
+  shadow_locations = template,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  datasource_canopy_height = "metachm",
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  min_tree_height = 2,
+  quiet = TRUE
+)
+
+radiation_with_downloaded_trees <- get_radiation(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  solar_normal = 850,
+  solar_diffuse = 120,
+  datasource_canopy_height = "metachm",
+  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  min_tree_height = 2,
+  canopy_transmissivity = 0.15,
+  quiet = TRUE
+)
+```
+
+```{r eval=FALSE}
+plot(dem, main = "Sample DEM")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+plot(canopy_height, main = "Canopy height")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+```
+
+The same `get_shadow_height()` call can now include tree canopy.
+
+```{r eval=FALSE}
+shadow_footprints_with_trees <- get_shadow_footprint(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  canopy_height = canopy_height,
+  dem = dem,
+  min_tree_height = 1.5,
+  quiet = TRUE,
+  plot = TRUE
+)
+```
+
+```{r eval=FALSE}
+shadow_height_with_trees <- get_shadow_height(
+  buildings,
+  shadow_locations = template,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  canopy_height = canopy_height,
+  dem = dem,
+  min_tree_height = 2,
+  quiet = TRUE
+)
+
+plot(shadow_height_with_trees, main = "Building and canopy shadow height")
+plot(st_geometry(buildings), col = NA, border = "black", add = TRUE)
+```
+
+## 6 Building Surface Radiation
+
+`get_radiation()` estimates direct, diffuse, and total radiation on building
+roofs and facades. When no custom grid is supplied, the function automatically
+samples the full 3D building surface — both horizontal roof points and vertical
+facade strips. `solar_normal` is direct normal irradiance and `solar_diffuse`
+is diffuse horizontal irradiance, each as a numeric vector with one value per
+`solar_time`.
+
+### 6.1 Building surface visualization
+
+Use `plot = TRUE` for the default 2D radiation map. Set `plot_3d = TRUE` only
+when you also want the isometric direct, diffuse, and total radiation view.
+
+`grid_res` controls the horizontal and vertical sampling density of the surface
+grid. Smaller values create more strips per wall and a smoother color gradient:
+
+| `grid_res` | Approx. strips per 10 m wall |
+|:-----------:|:-----------------------------:|
+| 8 (default) | 1–2 |
+| 4           | 2–3 |
+| 2           | ~5  |
+
+```{r eval=FALSE}
+radiation <- get_radiation(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  solar_normal = 850,
+  solar_diffuse = 120,
+  grid_res = 4,
+  plot_3d = TRUE
+)
+
+head(st_drop_geometry(radiation))
+```
+
+> **Single vs. multiple solar times.** At a single time step, direct radiation
+> on horizontal rooftops is binary — each roof is either fully lit
+> (`solar_normal × sin(elevation)`) or in shadow (0). Spatial variation in the
+> direct panel therefore reflects the shadow pattern at that moment. For a
+> continuous gradient across the scene, accumulate several hours:
+>
+> ```r
+> solar_day <- format(
+>   seq(as.POSIXct("2026-06-21 07:00", tz = time_zone),
+>       as.POSIXct("2026-06-21 19:00", tz = time_zone),
+>       by = "hour"),
+>   "%Y-%m-%d %H:%M:%S"
+> )
+> radiation_day <- get_radiation(
+>   buildings,
+>   solar_time    = solar_day,
+>   time_zone     = time_zone,
+>   solar_normal  = rep(850, length(solar_day)),
+>   solar_diffuse = rep(120, length(solar_day)),
+>   grid_res = 4,
+>   plot_3d  = TRUE
+> )
+> ```
+
+### 6.2 Tree canopy and terrain
+
+To include tree shade, pass a canopy height map and optionally a DEM.
+`canopy_transmissivity` controls how much direct radiation penetrates the
+canopy; `0` is fully opaque and `1` has no effect.
+
+```{r eval=FALSE}
+radiation_with_trees <- get_radiation(
+  buildings,
+  solar_time = solar_time,
+  time_zone = time_zone,
+  solar_normal = 850,
+  solar_diffuse = 120,
+  canopy_height = canopy_height,
+  dem = dem,
+  min_tree_height = 2,
+  canopy_transmissivity = 0.15,
+  grid_res = 4,
+  plot_3d = TRUE,
+  quiet = TRUE
+)
+```
+
+### 6.3 Canopy impact: radiation difference
+
+Compare mean roof radiation with and without tree canopy:
+
+```{r eval=FALSE}
+roof_building_only <- aggregate(
+  total ~ building_id,
+  data = st_drop_geometry(radiation[radiation$surface == "roof", ]),
+  FUN = mean
+)
+roof_with_trees <- aggregate(
+  total ~ building_id,
+  data = st_drop_geometry(radiation_with_trees[radiation_with_trees$surface == "roof", ]),
+  FUN = mean
+)
+
+roof_compare <- merge(
+  roof_building_only,
+  roof_with_trees,
+  by = "building_id",
+  suffixes = c("_building_only", "_with_trees")
+)
+
+head(roof_compare)
+```
+
+Because both radiation objects share the same surface grid (same buildings,
+same `grid_res`, same `solar_time`), rows correspond one-to-one and the
+difference can be computed directly. Negative values mean tree shade reduced
+radiation at that sample point.
+
+```{r eval=FALSE}
+radiation_diff <- radiation
+radiation_diff$direct_diff <- radiation_with_trees$direct - radiation$direct
+radiation_diff$total_diff  <- radiation_with_trees$total  - radiation$total
+
+# Summary by surface type
+aggregate(
+  cbind(direct_diff, total_diff) ~ surface,
+  data = st_drop_geometry(radiation_diff),
+  FUN = function(x) round(mean(x), 1)
+)
+```
+
+Map the total radiation reduction. The palette is centered at 0 using symmetric
+breaks so blue always means reduction and red means increase, regardless of the
+asymmetric range.
+
+```{r eval=FALSE}
+diff_pal <- hcl.colors(100, "Blue-Red 3")
+max_abs  <- max(abs(radiation_diff$total_diff), na.rm = TRUE)
+diff_breaks <- cut(radiation_diff$total_diff,
+                   breaks = seq(-max_abs, max_abs, length.out = 101),
+                   include.lowest = TRUE, labels = FALSE)
+
+plot(st_geometry(buildings), col = "grey95", border = "grey45",
+     main = "Total radiation change due to tree canopy (W/m²)")
+plot(st_geometry(radiation_diff), pch = 16, cex = 0.45,
+     col = diff_pal[diff_breaks], add = TRUE)
+legend("topright",
+       legend = c(paste0("≤ ", -round(max_abs, 0)), "0",
+                  paste0("≥ +", round(max_abs, 0))),
+       pch = 16,
+       col = c(diff_pal[1], diff_pal[50], diff_pal[100]),
+       bty = "n")
+```
+
+### 6.4 2D map view
+
+The returned `sf` object is a point layer, so standard `sf` map plots work
+directly. Roof and facade points are most readable when shown separately.
+
+```{r eval=FALSE}
+roof_radiation   <- radiation[radiation$surface == "roof",   ]
+facade_radiation <- radiation[radiation$surface == "facade", ]
+
+plot(roof_radiation["total"],   pch = 16, cex = 0.8,  key.pos = 4)
+plot(st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+
+plot(facade_radiation["total"], pch = 16, cex = 0.45, key.pos = 4)
+plot(st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+```
+
+
+### 6.5 Cumulative daily radiation
+
+Passing multiple solar times accumulates radiation across the day and produces
+more spatial variation in the direct component — surfaces that spend more time
+in sunlight receive proportionally higher totals.
+
+```{r eval=FALSE}
+solar_day <- c(
+  "2026-06-21 08:00:00",
+  "2026-06-21 11:00:00",
+  "2026-06-21 14:00:00",
+  "2026-06-21 17:00:00"
+)
+
+radiation_day <- get_radiation(
+  buildings,
+  solar_time    = solar_day,
+  time_zone     = time_zone,
+  solar_normal  = c(500, 850, 900, 650),
+  solar_diffuse = c(180, 120, 110, 150),
+  grid_res = 4,
+  plot_3d  = TRUE,
+  quiet    = TRUE
+)
+```
+
+```{r eval=FALSE}
+roof_day   <- radiation_day[radiation_day$surface == "roof",   ]
+facade_day <- radiation_day[radiation_day$surface == "facade", ]
+
+roof_day_breaks <- cut(roof_day$total, breaks = 100,
+                       include.lowest = TRUE, labels = FALSE)
+
+plot(st_geometry(buildings), col = "grey95", border = "grey45")
+plot(st_geometry(facade_day), pch = 16, cex = 0.25,
+     col = "#2563EB55", add = TRUE)
+plot(st_geometry(roof_day), pch = 16, cex = 0.75,
+     col = roof_cols[roof_day_breaks], add = TRUE)
+legend("topright",
+       legend = c("lower roof total", "higher roof total", "facade samples"),
+       pch = 16,
+       col = c(roof_cols[1], roof_cols[100], "#2563EB55"),
+       bty = "n")
+```
+
+## 7 Ground-Level Radiation
+
+### 7.1 Ground shadow map
+
+Setting `ground = TRUE` adds a regular grid of sample points at street/terrain
+level to the radiation object. Ground points lie outside all building footprints
+and have an upward-facing normal (`nz = 1`), so they receive:
+
+- **Direct radiation** — `solar_normal × sin(elevation)` when not in a
+  building or canopy shadow, and 0 (or attenuated by `canopy_transmissivity`)
+  when shaded.
+- **Diffuse radiation** — `solar_diffuse × SVF`, where SVF is the Sky View
+  Factor at ground level. Adjacent buildings reduce SVF, lowering diffuse
+  radiation near walls and in narrow alleys.
+
+`ground_res` sets the ground grid spacing independently from `grid_res` (the
+building surface spacing). A finer `ground_res` produces a denser radiation
+map but takes longer to compute.
+
+```{r eval=FALSE}
+radiation_ground <- get_radiation(
+  buildings,
+  solar_time    = c("2026-06-21 08:00:00", "2026-06-21 11:00:00",
+                    "2026-06-21 14:00:00", "2026-06-21 17:00:00"),
+  time_zone     = time_zone,
+  solar_normal  = c(500, 850, 900, 650),
+  solar_diffuse = c(180, 120, 110, 150),
+  grid_res      = 5,
+  ground        = TRUE,
+  ground_res    = 5,
+  plot          = TRUE
+)
+```
+
+With `ground = TRUE`, `plot = TRUE` draws three 2D maps: ground surface,
+facade, and roof total radiation. The maps share one W/m² color bar.
+
+Separate the ground layer for further analysis:
+
+```{r eval=FALSE}
+ground_rad <- radiation_ground[radiation_ground$surface == "ground", ]
+
+summary(st_drop_geometry(ground_rad[, c("svf", "direct", "diffuse", "total")]))
+```
+
+
+### 7.2 Ground radiation with tree canopy
+
+Passing a canopy height map attenuates shaded samples using
+`canopy_transmissivity`. With `plot = TRUE`, `get_radiation()` also plots the
+canopy impact as `canopy - no_canopy` total radiation.
+
+```{r eval=FALSE}
+radiation_ground_trees <- get_radiation(
+  buildings,
+  solar_time    = c("2026-06-21 08:00:00", "2026-06-21 11:00:00",
+                    "2026-06-21 14:00:00", "2026-06-21 17:00:00"),
+  time_zone             = time_zone,
+  solar_normal  = c(500, 850, 900, 650),
+  solar_diffuse = c(180, 120, 110, 150),
+  canopy_height         = canopy_height,
+  dem                   = dem,
+  min_tree_height       = 2,
+  canopy_transmissivity = 0.15,
+  grid_res              = 5,
+  ground                = TRUE,
+  ground_res            = 5,
+  quiet                 = TRUE,
+  plot = TRUE
+)
+```
+
+```{r eval=FALSE}
+ground_trees <- radiation_ground_trees[
+  radiation_ground_trees$surface == "ground", ]
+
+# Mean radiation reduction at ground level due to tree canopy
+mean(ground_trees$total - ground_rad$total, na.rm = TRUE)
+```
+
+### 7.3 Ground vs. roof comparison
+
+Combining ground and roof radiation in one call lets you compare solar
+exposure across all horizontal surfaces at once:
+
+```{r eval=FALSE}
+roof_ground <- radiation_ground[radiation_ground$surface %in% c("roof", "ground"), ]
+
+aggregate(
+  cbind(direct, diffuse, total) ~ surface,
+  data = st_drop_geometry(roof_ground),
+  FUN  = function(x) round(mean(x, na.rm = TRUE), 1)
+)
+```

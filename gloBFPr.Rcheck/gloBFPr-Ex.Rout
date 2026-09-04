@@ -1,0 +1,286 @@
+
+R version 4.5.2 (2025-10-31) -- "[Not] Part in a Rumble"
+Copyright (C) 2025 The R Foundation for Statistical Computing
+Platform: aarch64-apple-darwin20
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> pkgname <- "gloBFPr"
+> source(file.path(R.home("share"), "R", "examples-header.R"))
+> options(warn = 1)
+> library('gloBFPr')
+> 
+> base::assign(".oldSearch", base::search(), pos = 'CheckExEnv')
+> base::assign(".old_wd", base::getwd(), pos = 'CheckExEnv')
+> cleanEx()
+> nameEx("get_3d_world")
+> ### * get_3d_world
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: get_3d_world
+> ### Title: get_3d_world
+> ### Aliases: get_3d_world
+> 
+> ### ** Examples
+> 
+> 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("get_era5_met")
+> ### * get_era5_met
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: get_era5_met
+> ### Title: Fetch ERA5 conditions for OpenFOAM boundary conditions
+> ### Aliases: get_era5_met
+> 
+> ### ** Examples
+> 
+> ## Not run: 
+> ##D Sys.setenv(CDS_API_KEY = "your-token-here")
+> ##D 
+> ##D # Summer evening in Detroit
+> ##D met <- get_era5_met(
+> ##D   lon               = -83.05,
+> ##D   lat               =  42.34,
+> ##D   datetime          = "2023-07-15 22:00"
+> ##D )
+> ##D 
+> ##D ## ---- Wind simulation ------------------------------------------------
+> ##D prepare_foam_case(
+> ##D   case_dir       = "path/to/case",
+> ##D   stl_file       = "path/to/buildings.stl",
+> ##D   domain         = list(xmin = 0, xmax = 500, ymin = 0, ymax = 500,
+> ##D                         zmin = 0, zmax = 200),
+> ##D   inlet_velocity = met$inlet_velocity,
+> ##D   z_ref          = met$z_ref,
+> ##D   T_ref          = met$T_ref
+> ##D )
+> ## End(Not run)
+> 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("get_fused_dsm")
+> ### * get_fused_dsm
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: get_fused_dsm
+> ### Title: get_fused_dsm
+> ### Aliases: get_fused_dsm
+> 
+> ### ** Examples
+> 
+> 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("get_metadata")
+> ### * get_metadata
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: get_metadata
+> ### Title: get_metadata
+> ### Aliases: get_metadata
+> 
+> ### ** Examples
+> 
+> meta <- gloBFPr::get_metadata(test=TRUE)
+> 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("get_metrics")
+> ### * get_metrics
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: get_metrics
+> ### Title: get_metrics
+> ### Aliases: get_metrics get_morphology get_neighbors get_bgvi get_dng
+> 
+> ### ** Examples
+> 
+> library(gloBFPr)
+> data(globfp_example)
+> result <- gloBFPr::get_morphology(globfp_example[c(1:3),], quiet = TRUE)
+Linking to GEOS 3.13.0, GDAL 3.8.5, PROJ 9.5.1; sf_use_s2() is TRUE
+> 
+> result <- gloBFPr::get_neighbors(globfp_example[c(1:3),], radius = 100)
+  |                                                                              |                                                                      |   0%  |                                                                              |=======================                                               |  33%  |                                                                              |===============================================                       |  67%  |                                                                              |======================================================================| 100%
+✔ Completed. Time taken: 0 seconds.
+> 
+> result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
++                            datasource = "metachm",
++                            unit = "m2")
+ℹ Please input building footprint polygon.
+> 
+> # Measure along real road and path centre lines instead
+> result <- gloBFPr::get_dng(#globfp_example[c(1:3),],
++                            datasource = "metachm",
++                            unit = "m2",
++                            network = "osm")
+ℹ Please input building footprint polygon.
+> 
+> 
+> 
+> cleanEx()
+
+detaching ‘package:purrr’, ‘package:future’, ‘package:sf’
+
+> nameEx("globfp_example")
+> ### * globfp_example
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: globfp_example
+> ### Title: Test 3D-GloBFP dataset
+> ### Aliases: globfp_example
+> ### Keywords: datasets
+> 
+> ### ** Examples
+> 
+> data(globfp_example)
+> head(globfp_example)
+Simple feature collection with 6 features and 2 fields
+Geometry type: POLYGON
+Dimension:     XY
+Bounding box:  xmin: 329807.5 ymin: 4688864 xmax: 330110.9 ymax: 4689394
+Projected CRS: WGS 84 / UTM zone 17N
+         Height                       geometry id
+520676 19.54545 POLYGON ((330069.7 4689216,...  1
+520682 15.20905 POLYGON ((329807.5 4688930,...  2
+520683 12.94461 POLYGON ((329931.8 4689273,...  3
+520684 19.64550 POLYGON ((330060.6 4689241,...  4
+520685 15.00980 POLYGON ((329906.5 4689281,...  5
+520686 11.59947 POLYGON ((330035.8 4689366,...  6
+> 
+> 
+> 
+> cleanEx()
+> nameEx("globfp_example_canopy_height")
+> ### * globfp_example_canopy_height
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: globfp_example_canopy_height
+> ### Title: Example canopy height raster for the 3D-GloBFP sample
+> ### Aliases: globfp_example_canopy_height
+> ### Keywords: datasets
+> 
+> ### ** Examples
+> 
+> data(globfp_example_canopy_height)
+> canopy_height <- terra::rast(globfp_example_canopy_height)
+> canopy_height
+class       : SpatRaster 
+size        : 99, 106, 1  (nrow, ncol, nlyr)
+resolution  : 17.65165, 17.65165  (x, y)
+extent      : 329783.1, 331654.1, 4688653, 4690401  (xmin, xmax, ymin, ymax)
+coord. ref. : WGS 84 / UTM zone 17N (EPSG:32617) 
+source(s)   : memory
+name        : canopy_height 
+min value   :             0 
+max value   :            31 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("globfp_example_dem")
+> ### * globfp_example_dem
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: globfp_example_dem
+> ### Title: Example DEM for the 3D-GloBFP sample
+> ### Aliases: globfp_example_dem
+> ### Keywords: datasets
+> 
+> ### ** Examples
+> 
+> data(globfp_example_dem)
+> dem <- terra::rast(globfp_example_dem)
+> dem
+class       : SpatRaster 
+size        : 69, 74, 1  (nrow, ncol, nlyr)
+resolution  : 25.69228, 25.69228  (x, y)
+extent      : 329769.3, 331670.5, 4688640, 4690413  (xmin, xmax, ymin, ymax)
+coord. ref. : WGS 84 / UTM zone 17N (EPSG:32617) 
+source(s)   : memory
+name        :      dem 
+min value   : 175.1630 
+max value   : 211.0407 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("plot_bgvi_viewshed")
+> ### * plot_bgvi_viewshed
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: plot_bgvi_viewshed
+> ### Title: Visualize an Individual Building BGVI Viewshed
+> ### Aliases: plot_bgvi_viewshed
+> 
+> ### ** Examples
+> 
+> 
+> 
+> 
+> 
+> cleanEx()
+> nameEx("search_3dglobdf")
+> ### * search_3dglobdf
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: search_3dglobdf
+> ### Title: search_3dglobdf
+> ### Aliases: search_3dglobdf
+> 
+> ### ** Examples
+> 
+> ## Not run: 
+> ##D buildings <- gloBFPr::search_3dglobdf(bbox=c(-84.485519,45.636118,-84.462774,45.650639))
+> ## End(Not run)
+> 
+> 
+> 
+> 
+> ### * <FOOTER>
+> ###
+> cleanEx()
+> options(digits = 7L)
+> base::cat("Time elapsed: ", proc.time() - base::get("ptime", pos = 'CheckExEnv'),"\n")
+Time elapsed:  2.891 0.072 3.095 0.001 0.002 
+> grDevices::dev.off()
+null device 
+          1 
+> ###
+> ### Local variables: ***
+> ### mode: outline-minor ***
+> ### outline-regexp: "\\(> \\)?### [*]+" ***
+> ### End: ***
+> quit('no')

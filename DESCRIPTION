@@ -21,7 +21,7 @@ Description: Automated access and analysis of multidimensional building profile
     3D scenes (terrain, buildings, canopy)
     for 3D modeling software, such as Rhino3D and Blender.
 License: MIT + file LICENSE
-URL: https://github.com/billbillbilly/gloBFPr, https://billbillbilly.github.io/gloBFPr/
+URL: https://github.com/billbillbilly/gloBFPr
 BugReports: https://github.com/billbillbilly/gloBFPr/issues
 Encoding: UTF-8
 LazyData: true
@@ -34,7 +34,11 @@ Suggests:
     dsmSearch,
     viewscape (>= 2.0.1),
     greenSD,
-    ecmwfr,
+    ggplot2,
+    osmdata,
+    sfnetworks,
+    tidygraph,
+    tigris,
     duckdb,
     DBI
 Imports:
@@ -43,7 +47,6 @@ Imports:
     stats,
     igraph,
     sf,
-    lwgeom,
     dplyr,
     httr2,
     terra,

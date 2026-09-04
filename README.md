@@ -39,7 +39,7 @@ devtools::install_github("billbillbilly/gloBFPr@dev")
 
 The package will be on CRAN soon.
 
-## External software {#external-software}
+## External software
 
 Two `gloBFPr` workflows call out to external command-line software rather than bundling it as an R dependency. Both are optional — only install what you need.
 

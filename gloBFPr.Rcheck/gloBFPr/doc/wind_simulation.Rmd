@@ -1,0 +1,342 @@
+---
+title: "Urban Wind CFD with gloBFPr and OpenFOAM"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{Urban Wind CFD with gloBFPr and OpenFOAM}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, message=FALSE, eval=FALSE}
+library(gloBFPr)
+library(sf)
+library(terra)
+library(ggplot2)
+```
+
+`gloBFPr` connects three steps in one R session: collecting urban spatial data,
+writing OpenFOAM configuration files, and visualising CFD results as maps.
+
+# 1  Quick start {#quick-start}
+
+The package ships with a small Detroit-area dataset. No API keys are needed.
+
+```{r qs-data, eval=FALSE}
+data(globfp_example)
+buildings_list <- list(poly = globfp_example, binary = NULL, graduated = NULL)
+foam_case <- file.path(path.expand("~"), "openfoam_quickstart")
+
+foam_inputs <- prepare_openfoam_inputs(
+  case_dir            = foam_case,
+  buildings_list      = buildings_list,
+  height_col          = "Height",
+  include_buildings   = TRUE,
+  include_fused_dsm   = FALSE,
+  include_tree_canopy = FALSE,
+  include_morphology  = FALSE,
+  include_neighbors   = FALSE,
+  include_greenspace  = FALSE,
+  overwrite = TRUE, quiet = TRUE
+)
+
+case_files <- prepare_foam_case(
+  case_dir = foam_inputs$case_dir,
+  stl_file = foam_inputs$files$building_stl,
+  domain   = foam_inputs$domain,
+  inlet_velocity = c(5, 0, 0), z_ref = 10, z0 = 0.1,
+  base_cell_size = 5, sim_hours = 0.5, overwrite = TRUE
+)
+
+run_openfoam_docker(case_dir = foam_inputs$case_dir,
+                    image = "opencfd/openfoam-run:2506", wait = TRUE)
+
+maps <- read_foam_pedestrian_slice(case_dir = foam_inputs$case_dir,
+                                   base_cell_size = 5, resolution = 2)
+
+plot_foam_map(maps, layer = "U_mag",
+              palette = "YlOrRd", legend_title = "Speed (m/s)")
+```
+
+---
+
+# 2  Inputs {#inputs}
+
+A case draws on two input sources: spatial layers from
+`prepare_openfoam_inputs()` and meteorological conditions from `get_era5_met()`.
+Set them up once, then pass the results to any simulation.
+
+## 2.1  Spatial layers
+
+`prepare_openfoam_inputs()` collects four categories of data and writes them
+into a structured case folder:
+
+| Layer | File | Used for |
+|---|---|---|
+| Building footprints | `constant/triSurface/buildings.stl` | Solid geometry (`snappyHexMesh`) |
+| Fused DSM | `rasters/fused_dsm.tif` | Terrain source — see [Section 2.2](#geometry) |
+| Building heights | `rasters/building_height.tif` | Terrain recovery |
+| Canopy height (CHM) | `rasters/canopy_height.tif` | Canopy drag zone |
+| Ground roughness (z0) | `rasters/ground_roughness_z0.tif` | Wall roughness |
+
+```{r inputs-spatial, eval=FALSE}
+foam_inputs <- prepare_openfoam_inputs(
+  case_dir            = "~/openfoam_cases/detroit",
+  bbox                = c(-83.065644, 42.333792, -83.045217, 42.346988),
+  # target_crs is optional — the local UTM zone is chosen automatically
+  include_buildings   = TRUE,
+  include_fused_dsm   = TRUE,           # OpenTopography DEM + buildings + canopy
+  include_tree_canopy = TRUE,           # Meta CHM → canopy drag
+  canopy_source       = "metachm",
+  min_tree_height     = 2,
+  include_morphology  = TRUE,
+  include_neighbors   = TRUE,
+  include_greenspace  = TRUE,           # land cover → z0 raster
+  mask_tree_cover     = TRUE,
+  landcover_source    = "esri",         # "esa" (2020-2021) or "esri" (2017-2025)
+  landcover_year      = 2022,
+  opentopo_key        = Sys.getenv('OPENTOPO_API'),
+  overwrite           = TRUE
+)
+```
+
+## 2.2  Terrain and canopy geometry {#geometry}
+
+`prepare_openfoam_inputs()` writes terrain and canopy as *rasters*.
+`prepare_foam_geometry()` turns them into the STL geometry the mesher needs.
+This step is optional — skip it and you get a flat ground plane. If you pass
+terrain or canopy files to `prepare_foam_case()`, they must exist; explicitly
+supplied but unreadable inputs stop the case setup instead of being skipped.
+
+```{r geometry, eval=FALSE}
+geo <- prepare_foam_geometry(
+  case_dir        = foam_inputs$case_dir,
+  fused_dsm       = foam_inputs$files$fused_dsm,
+  building_height = foam_inputs$files$building_height_raster,
+  canopy_height   = foam_inputs$files$canopy_height_raster,
+  buildings       = readRDS(foam_inputs$files$buildings_rds),
+  height_col      = "Height",
+  domain          = foam_inputs$domain,
+  base_cell_size  = 10
+)
+# geo$terrain_stl   → constant/triSurface/terrain.stl
+# geo$canopy_stl    → constant/triSurface/canopy.stl
+# geo$building_stl  → buildings.stl, re-based onto the terrain
+# geo$dem           → recovered bare-earth SpatRaster
+```
+
+**Canopy becomes distributed drag, not solid blocks.** A tree crown passes and
+drags air; it does not block it. Meshing crowns as solid over-blocks the flow.
+The canopy volume selects cells for a `leafAreaDensity` field, which drives
+`atmPlantCanopyUSource` and `atmPlantCanopyTurbSource` in `constant/fvOptions`
+
+Drag is proportional to leaf area density, so cells outside the canopy are left
+at zero and feel nothing — which is why `selectionMode all` needs no cell set.
+Tune with `leaf_area_density` (default 0.4 m⁻¹; roughly 0.2 for sparse street
+trees, 0.8 for dense woodland) and `plant_cd` (default 0.2).
+
+## 2.3  Ground roughness z0 from land-cover data
+
+When `include_greenspace = TRUE`, land cover is reclassified to aerodynamic
+roughness length z0 and saved to `ground_roughness_z0.tif`. It sets
+`nutkRoughWallFunction` on the ground patch, so unresolved surface texture still
+slows the flow near the ground.
+
+**`"esa"`** — ESA WorldCover (years 2020, 2021 only):
+
+| ESA class | Description | z0 (m) |
+|---|---|---|
+| 10 | Tree cover | `NA` — canopy drag zone |
+| 20 | Shrubland | 0.20 |
+| 30 | Grassland | 0.05 |
+| 40 | Cropland | 0.05 |
+| 50 | Built-up | 0.03 — paved ground *between* resolved buildings |
+| 60 | Bare / sparse | 0.01 |
+| 70 | Snow / ice | 0.001 |
+| 80 | Permanent water | 0.0002 |
+| 90 | Herbaceous wetland | 0.05 |
+| 95 | Mangroves | 0.50 |
+| 100 | Moss and lichen | 0.01 |
+
+**`"esri"`** — Sentinel-2 10 m ESRI LULC Time Series (years 2017–2025).
+Use this when you need a year outside 2020–2021, or want consistent annual
+maps for before-and-after comparisons:
+
+| ESRI class | Name | z0 (m) |
+|---|---|---|
+| 2 | Trees | `NA` — canopy drag zone |
+| 11 | Rangeland — parks, lawns, pastures | 0.10 |
+| 5 | Crops | 0.05 |
+| 4 | Flooded vegetation | 0.05 |
+| 7 | Built area | 0.03 — paved ground between resolved buildings |
+| 8 | Bare ground | 0.01 |
+| 9 | Snow / ice | 0.001 |
+| 1 | Water | 0.0002 |
+| 10 | Clouds (no data) | 0.03 (fallback) |
+
+> Built-up z0 is 0.03 m, not the 0.5 m typical of *unresolved* urban terrain.
+> Buildings here are explicit geometry, so the roughness applies only to the
+> paved surface between them. Applying an urban-canopy z0 on top of resolved
+> buildings would count the same drag twice. For the same reason tree cover is
+> masked to `NA` — it is handled as canopy drag instead.
+
+```{r inputs-z0, eval=FALSE}
+z0_rast <- rast(foam_inputs$files$roughness_raster)
+z0_mean <- global(z0_rast, "mean", na.rm = TRUE)[[1]]
+cat(sprintf("Mean z0 = %.4f m\n", z0_mean))
+```
+
+## 2.4  ERA5 weather conditions
+
+`get_era5_met()` fetches hourly ERA5 reanalysis from the Copernicus Climate
+Data Store. A wind case needs the 10-m wind components; `T_ref` is used as the
+uniform reference temperature that switches buoyancy off.
+
+**One-time setup:** register at <https://cds.climate.copernicus.eu>, copy your
+personal access token, then store it:
+
+```r
+# Add to ~/.Renviron so it loads automatically every session
+CDS_API_KEY=your-token-here
+```
+
+```{r inputs-era5-wind, eval=FALSE}
+# Daytime — fetches 10-m wind components and 2-m temperature
+met <- get_era5_met(
+  lon      = -83.05,
+  lat      =  42.34,
+  datetime = "2023-07-15 14:00",
+  cds_key  = Sys.getenv("CDS_API_KEY")
+)
+# met$inlet_velocity  →  c(u10, v10, 0) m/s, ready for prepare_foam_case()
+# met$T_ref           →  2-m temperature in K
+```
+
+---
+
+# 3  Wind simulation {#wind}
+
+## 3.1  Write the case
+
+```{r wind-case, eval=FALSE}
+case_files <- prepare_foam_case(
+  case_dir            = foam_inputs$case_dir,
+  # geo$building_stl when you ran Section 2.2, otherwise the flat-ground STL
+  stl_file            = if (exists("geo") && !is.null(geo$building_stl)) {
+                          geo$building_stl
+                        } else {
+                          foam_inputs$files$building_stl
+                        },
+  domain              = foam_inputs$domain,
+  inlet_velocity      = met$inlet_velocity,   # ERA5 u10, v10 — any direction
+  z_ref               = met$z_ref,            # 10 m
+  T_ref               = met$T_ref,            # uniform: buoyancy inactive
+  z0                  = z0_mean,
+  terrain_stl         = if (exists("geo")) geo$terrain_stl else NULL,
+  terrain_dem         = if (exists("geo")) geo$dem else NULL,
+  canopy_stl          = if (exists("geo")) geo$canopy_stl else NULL,
+  base_cell_size      = 15,
+  building_refinement = 2L,
+  sim_hours           = 1,
+  overwrite           = TRUE
+)
+case_files$params$patch_roles
+#> xMin      xMax      yMin      yMax
+#> "inlet"   "outlet"  "lateral" "lateral"
+```
+
+### Any wind direction works
+
+`blockMesh` emits four separately named lateral patches — `xMin`, `xMax`,
+`yMin`, `yMax` — and each is assigned an inlet, outlet or lateral role from the
+sign of `dot(flowDir, outward_normal)`. A south-westerly gives two inlets and
+two outlets:
+
+```{r wind-oblique, eval=FALSE}
+prepare_foam_case(..., inlet_velocity = c(3, 3, 0))
+#> Wind: 4.24 m/s at 10 m, dir (0.707 0.707)
+#> patches: xMin=inlet xMax=outlet yMin=inlet yMax=outlet
+```
+
+> Earlier versions pinned the inlet to the x-min face and expressed direction
+> as a `flowDir` vector on it. For a northerly (`c(0, 5, 0)`) that injected
+> momentum through a face whose normal is −x, so the inflow normal component was
+> zero and effectively nothing entered — silently, with no error. If you have
+> results from an earlier non-x-aligned legacy OpenFOAM run, re-run them.
+
+## 3.2  Run via Docker
+
+```{r wind-run, eval=FALSE}
+run_openfoam_docker(
+  case_dir = foam_inputs$case_dir,
+  image    = "opencfd/openfoam-run:2506",
+  wait     = TRUE
+)
+```
+
+## 3.3  Visualise
+
+```{r wind-viz, eval=FALSE}
+maps <- read_foam_pedestrian_slice(
+  case_dir       = foam_inputs$case_dir,
+  T_ref          = case_files$params$T_ref,
+  base_cell_size = case_files$params$base_cell_size,
+  resolution     = 2
+)
+
+# Wind speed — buildings overlaid automatically
+plot_foam_map(maps, layer = "U_mag",
+              palette = "YlOrRd", legend_title = "Speed (m/s)",
+              title = "Pedestrian wind speed at 1.5 m AGL")
+
+# Speed with flow vectors
+p <- plot_foam_map(maps, layer = "U_mag",
+                   palette = "Blues", reverse = TRUE,
+                   legend_title = "Speed (m/s)")
+add_flow_vectors(p, maps, spacing = 20, colour = "grey20",
+                 alpha = 0.7, linewidth = 0.25, arrow_size = 0.07)
+
+# Wind speed ratio (> 1.3 = potentially uncomfortable)
+plot_foam_map(maps, layer = "U_mag", palette = "RdYlGn", reverse = TRUE,
+              legend_title = "U / U_ref",
+              max_u_ref = sqrt(sum(met$inlet_velocity^2)))
+```
+
+> All `plot_foam_map()` calls return a plain `ggplot` object.
+> Export with `ggsave("wind_map.png", width = 10, height = 8, dpi = 300)`.
+
+The temperature field is uniform, so `T_cool` is ≈ 0 and only the velocity
+layers carry information.
+
+> **The map above is an instantaneous field, not a mean.** The case is
+> transient and `read_foam_pedestrian_slice()` takes the latest write, so in
+> the wakes behind large buildings it shows whichever phase of the vortex
+> shedding the run stopped on. Pedestrian comfort is assessed on a mean.
+>
+> The case therefore also runs a `fieldAverage` function object and writes a
+> time-averaged slice of its own, starting one flow-through in (`endTime / 3`)
+> so the startup transient is excluded:
+>
+> ```
+> postProcessing/pedestrianSliceMean/<time>/z1p5m_UMean.raw
+> ```
+>
+> Same raw format as the instantaneous slice — x, y, z then the three velocity
+> components. `read_foam_pedestrian_slice()` does not read it yet; for now
+> parse it directly, or compare it against the instantaneous map to see how
+> much the wakes move.
+
+> `read_foam_pedestrian_slice()` reads the 1.5 m slice that the case writes
+> automatically. To sample **other heights or other fields** — `p_rgh`, `k`,
+> `nut` — use `sample_foam_slice()` instead; it runs `postProcess` in the
+> container after the fact, so you can re-sample without re-running the
+> simulation:
+>
+> ```r
+> slice <- sample_foam_slice(case_dir = foam_inputs$case_dir,
+>                            fields = c("U", "p_rgh"), z = 10,
+>                            image = "opencfd/openfoam-run:2506", resolution = 5)
+> ```
+>
+> Note the field is `p_rgh` (pressure minus hydrostatic), not `p`: the buoyant
+> solver does not carry a separate kinematic pressure. Static pressure is
+> `p_rgh + ρgh` if you need it.
