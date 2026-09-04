@@ -2,68 +2,110 @@
 % Please edit documentation in R/openfoam_nocturnal.R
 \name{read_foam_pedestrian_slice}
 \alias{read_foam_pedestrian_slice}
-\title{Read OpenFOAM pedestrian-level slice and compute thermal maps}
+\title{Read the pedestrian-level slice and compute wind maps}
 \usage{
 read_foam_pedestrian_slice(
   case_dir,
-  T_ref = 295,
+  T_ref = NULL,
   time_step = "latest",
   resolution = 2,
+  base_cell_size = 10,
+  agl_tol = 5,
+  trim = "auto",
+  canopy = NULL,
+  min_canopy_height = 2,
   crs = NA,
   buildings = NULL,
   quiet = FALSE
 )
 }
 \arguments{
-\item{case_dir}{Character. OpenFOAM case directory (same as passed to
-\code{prepare_nocturnal_case()}).}
+\item{case_dir}{Character. OpenFOAM case directory.}
 
-\item{T_ref}{Numeric. Reference (ambient) temperature in K used to compute
-\code{T_cool = T_ref - T_air}.  Should match the value used in
-\code{prepare_nocturnal_case()}.  Default 295 K.}
+\item{T_ref}{Numeric. Reference temperature (K) for \code{T_cool}, which is
+\code{T_ref - T}.  It has to match the temperature the case was
+initialised at, or every cooling number is offset by the difference and
+\code{T_cool} can come out negative everywhere.  The default,
+\code{NULL}, reads \code{TRef} from the case's
+\code{constant/transportProperties} and only falls back to 295 K when
+that file cannot be read.}
 
-\item{time_step}{Character or numeric. \code{"latest"} (default) uses the
-highest-numbered time directory; pass an integer to pick a specific step.}
+\item{time_step}{\code{"latest"} (default) or a number of seconds.}
 
-\item{resolution}{Numeric. Raster cell size in metres for output grids.
-Default 2 m.}
+\item{resolution}{Numeric. Output cell size (m). Default 2.}
 
-\item{crs}{Character or numeric. CRS to assign to the returned raster
-(e.g. \code{32617} for UTM 17N).  The OpenFOAM output is in local
-coordinates (origin at domain SW corner); use \code{foam_inputs$origin}
-and \code{foam_inputs$crs} to georeferenc the result after rasterization.
-Default \code{NA} (no CRS).}
+\item{base_cell_size}{Numeric. Background mesh cell size used when the case
+was generated (\code{foam$params$base_cell_size}); sets the gap-fill
+window. Default 10.}
 
-\item{buildings}{Optional \code{sf} object of building footprints in the
-same local coordinate system as the raster (pass
-\code{readRDS(foam_inputs\$files\$buildings_rds)}).  When supplied,
-building interiors are masked to \code{NA} \emph{after} gap-filling, so
-that small buildings which would otherwise be flooded over by the
-interpolation step are correctly restored as voids.  Default \code{NULL}.}
+\item{agl_tol}{Numeric. Samples more than this many metres above the local
+ground surface are discarded.  Guards against the stray near-vertical
+sheet a distanceSurface can generate around a closed terrain STL, which
+otherwise folds upper-level wind into the pedestrian map. Default 5.}
+
+\item{trim}{Crop the flow-adjustment zone off the returned raster.
+\code{"auto"} (default) removes, per side, the building-free apron plus an
+adjustment fetch; \code{"buildings"} removes only the apron; a number
+removes that many metres from every side; \code{0} returns the full domain.
+
+Trimming is on by default because the outer band is not a result. The
+domain is larger than the built area, and even where buildings reach the
+boundary the ABL inlet delivers an undisturbed profile that only slows as
+it works into the roughness. Measured on a real case, the outer 100 m
+averaged 1.86 m/s against 0.74 m/s in the interior - a bright rim that is
+an artifact of the domain, not a feature of the city. Excluding it is
+standard practice in urban CFD.
+
+Each side is trimmed by \code{max(apron, fetch)} - not their sum. The
+fetch is measured from the domain boundary and the apron is its first
+part, so they overlap rather than stack.
+
+The fetch is ~5x the median building height (100 m when the layer has no
+height column), clamped to 50-150 m and to 10\% of the shorter domain
+span. That is deliberately less than the ~15x an internal boundary layer
+needs to fully equilibrate: on a measured case the edge excess was
+concentrated in the outer 100 m, and beyond that the band-to-band
+variation was genuine urban structure rather than an edge effect. The
+amount removed on each side is reported.}
+
+\item{canopy}{Canopy height raster (path or SpatRaster) used to build a
+canopy overlay for \code{\link{plot_foam_map}}.  Auto-detected from
+\code{constant/gloBFPr/rasters/canopy_height.tif} when \code{NULL}; pass
+\code{FALSE} to skip it.  The result is attached as the \code{"canopy"}
+attribute, mirroring \code{"buildings"}.}
+
+\item{min_canopy_height}{Numeric. Canopy cells below this height are ignored.
+Default 2 m, matching \code{min_tree_height} in
+\code{\link{prepare_openfoam_inputs}}.}
+
+\item{crs}{CRS to assign (e.g. \code{32617}). Default \code{NA}.}
+
+\item{buildings}{Optional \code{sf} footprints in local coordinates;
+auto-detected from the case directory when \code{NULL}.}
 
 \item{quiet}{Logical. Default \code{FALSE}.}
 }
 \value{
-A \code{terra::SpatRaster} with six layers:
-\code{T_air}, \code{U_mag}, \code{T_cool}, \code{T_cool_flux},
-\code{Ux}, \code{Uy}.
+A \code{terra::SpatRaster} with six layers.
 }
 \description{
-Reads the horizontal surface sample at z = 1.5 m written by
-\code{buoyantBoussinesqSimpleFoam} (via the \code{pedestrianSlice}
-function object in \code{controlDict}) and returns a multi-layer
-\code{SpatRaster} with the four pedestrian-level maps from
-\code{prepare_nocturnal_case()}:
+Reads the pedestrian-level surface sample written by the
+\code{pedestrianSlice} function object and returns a multi-layer
+\code{SpatRaster}. The current OpenFOAM workflow is wind-only, so the
+velocity layers are the primary result; temperature-derived layers should be
+approximately zero for neutral wind cases:
 
 \describe{
-\item{T_air}{Air temperature in K}
-\item{U_mag}{Wind speed magnitude in m/s (density-gradient driven)}
-\item{T_cool}{Cooling relative to ambient: \eqn{T_{ref} - T_{air}} (K)}
-\item{T_cool_flux}{\eqn{\max(T_{cool},0) \times |U|} — cool-air transport flux}
-\item{Ux}{East–west velocity component (m/s)}
-\item{Uy}{North–south velocity component (m/s)}
+\item{T_air}{Air temperature (K)}
+\item{U_mag}{Wind speed (m/s)}
+\item{T_cool}{Cooling relative to ambient, \eqn{T_{ref} - T_{air}} (K)}
+\item{T_cool_flux}{\eqn{\max(T_{cool},0) \times |U|} - cool-air transport}
+\item{Ux, Uy}{Horizontal velocity components (m/s)}
 }
+
+The case is transient, so \code{time_step} selects a physical time in
+seconds since sunset; \code{"latest"} gives the end of the run.
 }
 \seealso{
-\code{\link{prepare_nocturnal_case}}, \code{\link{run_openfoam_docker}}
+\code{\link{prepare_foam_case}}, \code{\link{run_openfoam_docker}}
 }

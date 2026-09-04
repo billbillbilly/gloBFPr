@@ -5,18 +5,13 @@ testthat::test_that("shadow and radiation functions handle missing input", {
 })
 
 testthat::test_that("solar position validation is strict", {
-  validate_solar_pos <- getFromNamespace("validate_solar_pos", "gloBFPr")
   validate_azimuth_elevation <- getFromNamespace("validate_azimuth_elevation", "gloBFPr")
-  testthat::expect_equal(
-    validate_solar_pos(data.frame(az = 180, elev = 45, extra = 1)),
-    matrix(c(180, 45), nrow = 1, dimnames = list(NULL, c("azimuth", "elevation")))
-  )
   testthat::expect_equal(
     validate_azimuth_elevation(list(90, 180), c(45, 30)),
     matrix(c(90, 180, 45, 30), ncol = 2, dimnames = list(NULL, c("azimuth", "elevation")))
   )
-  testthat::expect_error(validate_solar_pos(matrix(180, ncol = 1)), "two columns")
-  testthat::expect_error(validate_solar_pos(matrix(c(180, NA), ncol = 2)), "numeric")
+  testthat::expect_error(validate_azimuth_elevation(NULL, 45), "Provide either")
+  testthat::expect_error(validate_azimuth_elevation(180, NA), "numeric")
   testthat::expect_error(validate_azimuth_elevation(c(90, 180), 45), "same length")
 })
 
@@ -40,8 +35,7 @@ testthat::test_that("solar time uses time zone and takes precedence", {
     azimuth = 1,
     elevation = 1,
     solar_time = list("2026-06-21 12:00:00", "2026-06-21 13:00:00"),
-    time_zone = "UTC",
-    solar_pos = matrix(c(1, 1), ncol = 2)
+    time_zone = "UTC"
   )
 
   testthat::expect_equal(nrow(result), 2)
@@ -95,7 +89,7 @@ testthat::test_that("svf returns a raster with lower values near buildings", {
   testthat::expect_lt(near, far)
 })
 
-testthat::test_that("get_shadow_height accepts deprecated location alias", {
+testthat::test_that("get_shadow_height uses shadow_locations and rejects old location alias", {
   building <- sf::st_sf(
     Height = 10,
     geometry = sf::st_sfc(sf::st_polygon(list(matrix(
@@ -110,20 +104,27 @@ testthat::test_that("get_shadow_height accepts deprecated location alias", {
   )
   point <- sf::st_as_sf(data.frame(x = 5, y = 5), coords = c("x", "y"), crs = 3857)
 
-  testthat::expect_warning(
-    result <- gloBFPr::get_shadow_height(
+  result <- gloBFPr::get_shadow_height(
+    building,
+    shadow_locations = point,
+    azimuth = 90,
+    elevation = 45,
+    quiet = TRUE
+  )
+  testthat::expect_true(is.matrix(result))
+  testthat::expect_error(
+    gloBFPr::get_shadow_height(
       building,
       location = point,
       azimuth = 90,
       elevation = 45,
       quiet = TRUE
     ),
-    "deprecated"
+    "unused argument"
   )
-  testthat::expect_true(is.matrix(result))
 })
 
-testthat::test_that("get_shadow_height rejects both location names", {
+testthat::test_that("get_shadow_height rejects unknown arguments", {
   building <- sf::st_sf(
     Height = 10,
     geometry = sf::st_sfc(sf::st_polygon(list(matrix(
@@ -141,13 +142,12 @@ testthat::test_that("get_shadow_height rejects both location names", {
   testthat::expect_error(
     gloBFPr::get_shadow_height(
       building,
-      shadow_locations = point,
-      location = point,
+      unexpected = point,
       azimuth = 90,
       elevation = 45,
       quiet = TRUE
     ),
-    "only one"
+    "unused argument"
   )
 })
 
@@ -283,7 +283,7 @@ testthat::test_that("shadow footprints can combine overlapping solar positions",
   testthat::expect_equal(result$solar_count, 3)
 })
 
-testthat::test_that("shadow footprints accept deprecated combine alias", {
+testthat::test_that("shadow footprints use overlap_shadow and reject old combine alias", {
   building <- sf::st_sf(
     Height = 10,
     geometry = sf::st_sfc(sf::st_polygon(list(matrix(
@@ -298,16 +298,24 @@ testthat::test_that("shadow footprints accept deprecated combine alias", {
   )
   solar_pos <- rbind(c(90, 45), c(180, 35))
 
-  testthat::expect_warning(
-    result <- gloBFPr::get_shadow_footprint(
+  result <- gloBFPr::get_shadow_footprint(
+    building,
+    azimuth = solar_pos[, 1],
+    elevation = solar_pos[, 2],
+    overlap_shadow = TRUE,
+    quiet = TRUE
+  )
+  testthat::expect_equal(result$solar_count, 2)
+  testthat::expect_error(
+    gloBFPr::get_shadow_footprint(
       building,
-      solar_pos = solar_pos,
+      azimuth = solar_pos[, 1],
+      elevation = solar_pos[, 2],
       combine = TRUE,
       quiet = TRUE
     ),
-    "deprecated"
+    "unused argument"
   )
-  testthat::expect_equal(result$solar_count, 2)
 })
 
 testthat::test_that("canopy shadows reduce direct radiation", {
@@ -361,6 +369,49 @@ testthat::test_that("canopy shadows reduce direct radiation", {
   testthat::expect_lt(min(roof_canopy), max(roof_plain))
 })
 
+testthat::test_that("get_radiation plots canopy impact when canopy is supplied", {
+  building <- sf::st_sf(
+    Height = 10,
+    geometry = sf::st_sfc(sf::st_polygon(list(matrix(
+      c(0, 0,
+        0, 10,
+        10, 10,
+        10, 0,
+        0, 0),
+      ncol = 2,
+      byrow = TRUE
+    ))), crs = 3857)
+  )
+
+  chm <- terra::rast(
+    xmin = -30, xmax = 30,
+    ymin = -20, ymax = 20,
+    resolution = 5,
+    crs = "EPSG:3857"
+  )
+  terra::values(chm) <- 0
+  chm[terra::cellFromXY(chm, matrix(c(20, 2.5), ncol = 2))] <- 30
+
+  plot_file <- tempfile(fileext = ".pdf")
+  grDevices::pdf(plot_file)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  result <- gloBFPr::get_radiation(
+    building,
+    azimuth = 90,
+    elevation = 45,
+    solar_normal = 800,
+    solar_diffuse = 100,
+    canopy_height = chm,
+    canopy_transmissivity = 0.1,
+    grid_res = 10,
+    plot = TRUE,
+    quiet = TRUE
+  )
+
+  testthat::expect_s3_class(result, "sf")
+  testthat::expect_true(all(c("direct", "diffuse", "total") %in% names(result)))
+})
+
 testthat::test_that("get_radiation can plot and still returns sf", {
   building <- sf::st_sf(
     Height = 10,
@@ -398,6 +449,52 @@ testthat::test_that("get_radiation can plot and still returns sf", {
     result$z
   )
   testthat::expect_equal(length(projection$x), nrow(result))
+})
+
+testthat::test_that("get_radiation plots ground, facade, and roof surfaces in 2D", {
+  building <- sf::st_sf(
+    Height = c(10, 8),
+    geometry = sf::st_sfc(
+      sf::st_polygon(list(matrix(
+        c(0, 0,
+          0, 10,
+          10, 10,
+          10, 0,
+          0, 0),
+        ncol = 2,
+        byrow = TRUE
+      ))),
+      sf::st_polygon(list(matrix(
+        c(30, 0,
+          30, 10,
+          40, 10,
+          40, 0,
+          30, 0),
+        ncol = 2,
+        byrow = TRUE
+      ))),
+      crs = 3857
+    )
+  )
+
+  plot_file <- tempfile(fileext = ".pdf")
+  grDevices::pdf(plot_file)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  result <- gloBFPr::get_radiation(
+    building,
+    azimuth = 90,
+    elevation = 45,
+    solar_normal = 800,
+    solar_diffuse = 100,
+    grid_res = 10,
+    ground = TRUE,
+    ground_res = 10,
+    plot = TRUE,
+    quiet = TRUE
+  )
+
+  testthat::expect_s3_class(result, "sf")
+  testthat::expect_true(all(c("ground", "facade", "roof") %in% result$surface))
 })
 
 testthat::test_that("get_radiation computes diffuse radiation from surface SVF", {

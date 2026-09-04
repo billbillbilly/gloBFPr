@@ -312,6 +312,8 @@ testthat::test_that("get_dng uses filtered green candidates and handles empty re
   mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
                                     zoom = 17, year = NULL, min_tree_height = 2) {
     captured_min_tree_height <<- min_tree_height
+    if (is.null(buffer)) buffer <- bbox
+    buffer <- sf::st_transform(buffer, getFromNamespace("get_utm_crs", "gloBFPr")(buffer))
     buffer_vect <- terra::vect(buffer)
     template <- terra::rast(
       ext = terra::ext(buffer_vect),
@@ -386,6 +388,8 @@ testthat::test_that("get_dng copies group distance back to features", {
 
   mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
                                     zoom = 17, year = NULL, min_tree_height = 2) {
+    if (is.null(buffer)) buffer <- bbox
+    buffer <- sf::st_transform(buffer, getFromNamespace("get_utm_crs", "gloBFPr")(buffer))
     buffer_vect <- terra::vect(buffer)
     template <- terra::rast(
       ext = terra::ext(buffer_vect),
@@ -496,6 +500,8 @@ testthat::test_that("get_dng routes along a supplied network and flags the metho
   # Green pixel 40 m due east of the building centroid.
   mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
                                     zoom = 17, year = NULL, min_tree_height = 2) {
+    if (is.null(buffer)) buffer <- bbox
+    buffer <- sf::st_transform(buffer, getFromNamespace("get_utm_crs", "gloBFPr")(buffer))
     buffer_vect <- terra::vect(buffer)
     template <- terra::rast(
       ext = terra::ext(buffer_vect),
@@ -525,7 +531,7 @@ testthat::test_that("get_dng routes along a supplied network and flags the metho
     suppressWarnings(sf::st_centroid(sf::st_transform(building, utm_crs)))
   )
 
-  # A detour street: north 60 m, east 100 m, back south 60 m. Any route to the
+  # A detour street: north 60 m, east 40 m, back south 60 m. Any route to the
   # green pixel must go the long way round, so the network distance has to
   # exceed the 40 m straight-line distance.
   detour <- sf::st_sf(
@@ -534,8 +540,8 @@ testthat::test_that("get_dng routes along a supplied network and flags the metho
       sf::st_linestring(matrix(
         c(centroid[1, "X"],       centroid[1, "Y"],
           centroid[1, "X"],       centroid[1, "Y"] + 60,
-          centroid[1, "X"] + 100, centroid[1, "Y"] + 60,
-          centroid[1, "X"] + 100, centroid[1, "Y"]),
+          centroid[1, "X"] + 40, centroid[1, "Y"] + 60,
+          centroid[1, "X"] + 40, centroid[1, "Y"]),
         ncol = 2, byrow = TRUE
       )),
       crs = utm_crs
@@ -576,6 +582,8 @@ testthat::test_that("get_dng falls back to euclidean when the network is unusabl
 
   mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
                                     zoom = 17, year = NULL, min_tree_height = 2) {
+    if (is.null(buffer)) buffer <- bbox
+    buffer <- sf::st_transform(buffer, getFromNamespace("get_utm_crs", "gloBFPr")(buffer))
     buffer_vect <- terra::vect(buffer)
     template <- terra::rast(
       ext = terra::ext(buffer_vect),
@@ -620,6 +628,161 @@ testthat::test_that("get_dng falls back to euclidean when the network is unusabl
       network = 42, quiet = TRUE
     ),
     "must be NULL"
+  )
+})
+
+testthat::test_that("plot_bgvi_viewshed returns single-building diagnostic layers", {
+  testthat::skip_if_not_installed("viewscape")
+
+  make_square <- function(xmin, ymin, xmax, ymax) {
+    sf::st_polygon(list(matrix(
+      c(xmin, ymin,
+        xmin, ymax,
+        xmax, ymax,
+        xmax, ymin,
+        xmin, ymin),
+      ncol = 2,
+      byrow = TRUE
+    )))
+  }
+
+  buildings <- sf::st_sf(
+    id = c("target", "neighbor"),
+    Height = c(18, 12),
+    geometry = sf::st_sfc(
+      make_square(3.0000, 0.0000, 3.0002, 0.0002),
+      make_square(3.0006, 0.0000, 3.0008, 0.0002),
+      crs = 4326
+    )
+  )
+
+  make_template <- function(bbox) {
+    bbox_sfc <- sf::st_as_sfc(sf::st_bbox(
+      c(xmin = bbox[1], ymin = bbox[2], xmax = bbox[3], ymax = bbox[4]),
+      crs = 4326
+    ))
+    utm_crs <- getFromNamespace("get_utm_crs", "gloBFPr")(bbox_sfc)
+    bbox_proj <- sf::st_transform(bbox_sfc, utm_crs)
+    terra::rast(
+      ext = terra::ext(sf::st_bbox(bbox_proj)),
+      resolution = 10,
+      crs = sf::st_crs(bbox_proj)$wkt
+    )
+  }
+
+  mocked_get_chm <- function(bbox, min_height, datasource = "metachm") {
+    r <- make_template(bbox)
+    filtered <- r
+    binary <- r
+    terra::values(filtered) <- 0
+    terra::values(binary) <- 0
+    list(filtered, binary)
+  }
+  mocked_get_dem <- function(bbox, key) {
+    r <- make_template(bbox)
+    terra::values(r) <- 0
+    r
+  }
+  mocked_get_greenspace <- function(bbox = NULL, buffer = NULL, type = NULL,
+                                    zoom = 17, year = NULL, min_tree_height = 2) {
+    bbox_vector <- if (is.numeric(bbox) && length(bbox) == 4) {
+      bbox
+    } else {
+      getFromNamespace("bbox_poly_to_list", "gloBFPr")(bbox)
+    }
+    r <- make_template(bbox_vector)
+    terra::values(r) <- 1
+    r
+  }
+
+  namespace <- asNamespace("gloBFPr")
+  old_get_chm <- get("get_chm", envir = namespace)
+  old_get_dem <- get("get_dem", envir = namespace)
+  old_get_greenspace <- get("get_greenspace", envir = namespace)
+  unlockBinding("get_chm", namespace)
+  unlockBinding("get_dem", namespace)
+  unlockBinding("get_greenspace", namespace)
+  assign("get_chm", mocked_get_chm, envir = namespace)
+  assign("get_dem", mocked_get_dem, envir = namespace)
+  assign("get_greenspace", mocked_get_greenspace, envir = namespace)
+  lockBinding("get_chm", namespace)
+  lockBinding("get_dem", namespace)
+  lockBinding("get_greenspace", namespace)
+  on.exit({
+    unlockBinding("get_chm", namespace)
+    unlockBinding("get_dem", namespace)
+    unlockBinding("get_greenspace", namespace)
+    assign("get_chm", old_get_chm, envir = namespace)
+    assign("get_dem", old_get_dem, envir = namespace)
+    assign("get_greenspace", old_get_greenspace, envir = namespace)
+    lockBinding("get_chm", namespace)
+    lockBinding("get_dem", namespace)
+    lockBinding("get_greenspace", namespace)
+  }, add = TRUE)
+
+  result <- gloBFPr::plot_bgvi_viewshed(
+    buildings,
+    building = "target",
+    floor = 3,
+    orientation = 90,
+    field_of_view = 90,
+    datasource_greenspace = "esri",
+    radius = 120,
+    key = "fake-key",
+    plot = FALSE,
+    quiet = TRUE
+  )
+
+  testthat::expect_equal(result$height, 7.7)
+  testthat::expect_equal(result$building$id, "target")
+  testthat::expect_s4_class(result$viewshed_raster, "SpatRaster")
+  testthat::expect_s4_class(result$visible_green, "SpatRaster")
+  viewscape_raster <- viewscape:::filter_invisible(result$viewshed, TRUE)
+  testthat::expect_equal(
+    as.vector(terra::ext(result$viewshed_raster)),
+    as.vector(terra::ext(viewscape_raster)),
+    tolerance = 1e-6
+  )
+  testthat::expect_true(terra::compareGeom(
+    result$viewshed_raster,
+    result$binary_green,
+    stopOnError = FALSE
+  ))
+  testthat::expect_true(is.finite(result$gvi))
+  testthat::expect_true(sum(terra::values(result$sector_mask) == 1, na.rm = TRUE) <
+	                          terra::ncell(result$sector_mask))
+  testthat::expect_true(any(terra::values(result$plot_raster) == 4, na.rm = TRUE))
+  p <- result$viewpoint
+  corner_building <- sf::st_sf(
+    id = "outside-radius",
+    Height = 8,
+    geometry = sf::st_sfc(sf::st_polygon(list(matrix(
+      c(p[1] + 85, p[2] + 85,
+        p[1] + 85, p[2] + 95,
+        p[1] + 95, p[2] + 95,
+        p[1] + 95, p[2] + 85,
+        p[1] + 85, p[2] + 85),
+      ncol = 2,
+      byrow = TRUE
+    ))), crs = sf::st_crs(result$building))
+  )
+  radius_limited <- getFromNamespace("bgvi_plot_raster", "gloBFPr")(
+    result,
+    buildings = rbind(result$building[, c("id", "Height", "geometry")], corner_building)
+  )
+  corner_cell <- terra::cellFromXY(radius_limited, matrix(c(p[1] + 90, p[2] + 90), ncol = 2))
+  testthat::expect_false(terra::values(radius_limited)[corner_cell] %in% c(5, 6))
+
+  empty_result <- result
+  terra::values(empty_result$viewshed_raster) <- 0
+  terra::values(empty_result$visible_green) <- NA_real_
+  grDevices::pdf(tempfile(fileext = ".pdf"))
+  on.exit(grDevices::dev.off(), add = TRUE)
+  testthat::expect_silent(
+    getFromNamespace("plot_bgvi_viewshed_result", "gloBFPr")(
+      empty_result,
+      buildings = buildings
+    )
   )
 })
 
@@ -865,6 +1028,16 @@ testthat::test_that("get_bgvi flattens target building and samples floors", {
   testthat::expect_error(
     gloBFPr::get_bgvi(
       building,
+      datasource = "metachm",
+      key = "fake-key",
+      workers = 1,
+      quiet = TRUE
+    ),
+    "matches multiple formal|unused argument"
+  )
+  testthat::expect_error(
+    gloBFPr::get_bgvi(
+      building,
       datasource_canopy_height = NULL,
       datasource_greenspace = NULL,
       key = "fake-key",
@@ -872,5 +1045,34 @@ testthat::test_that("get_bgvi flattens target building and samples floors", {
       quiet = TRUE
     ),
     "At least one"
+  )
+})
+
+testthat::test_that("plot_bgvi_viewshed rejects removed datasource argument", {
+  make_square <- function(xmin, ymin, xmax, ymax) {
+    sf::st_polygon(list(matrix(
+      c(xmin, ymin,
+        xmin, ymax,
+        xmax, ymax,
+        xmax, ymin,
+        xmin, ymin),
+      ncol = 2,
+      byrow = TRUE
+    )))
+  }
+
+  building <- sf::st_sf(
+    Height = 10,
+    geometry = sf::st_sfc(make_square(3.0000, 0.0000, 3.0002, 0.0002), crs = 4326)
+  )
+
+  testthat::expect_error(
+    gloBFPr::plot_bgvi_viewshed(
+      building,
+      datasource = "metachm",
+      plot = FALSE,
+      quiet = TRUE
+    ),
+    "matches multiple formal|no longer supported"
   )
 })

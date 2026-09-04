@@ -228,7 +228,7 @@ bgvi <- get_bgvi(
   radius = 800,
   floor = FALSE,
   workers = 1,
-  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  key = Sys.getenv('OPENTOPO_API'),
   quiet = TRUE
 )
 
@@ -249,7 +249,7 @@ bgvi_2d_green <- get_bgvi(
   radius = 800,
   short_building_threshold = 6,
   workers = 1,
-  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  key = Sys.getenv('OPENTOPO_API'),
   quiet = TRUE
 )
 ```
@@ -267,7 +267,7 @@ bgvi_directional <- get_bgvi(
   directions = c("southwest", "south", "southeast"),
   field_of_view = 45,
   workers = 1,
-  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  key = Sys.getenv('OPENTOPO_API'),
   quiet = TRUE
 )
 
@@ -275,6 +275,46 @@ bgvi_directional |>
   st_drop_geometry() |>
   select(id, mean_gvi_south, gvi_bottom_south, gvi_top_south) |>
   head()
+```
+
+Use `plot_bgvi_viewshed()` when you want to inspect the viewshed behind one
+building's BGVI value. It uses the same DSM and green-feature preparation as
+`get_bgvi()`, but computes a single viewpoint and returns the diagnostic
+rasters invisibly when `plot = TRUE`.
+
+```{r eval=FALSE}
+top_direction_view <- plot_bgvi_viewshed(
+  buildings,
+  building = 195,
+  level = "top",
+  orientation = "north",
+  field_of_view = 90,
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  radius = 500,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+```
+
+You can also inspect a specific floor or supply an observer height directly.
+
+```{r eval=FALSE}
+fifth_floor_view <- plot_bgvi_viewshed(
+  buildings,
+  building = 1,
+  floor = 5,
+  orientation = 135,
+  field_of_view = 90,
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  radius = 500,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+
+fifth_floor_view$gvi
+fifth_floor_view$visible_green
 ```
 
 To compute GVI by floor, set `floor = TRUE`. Use `floor_step` to sample every
@@ -288,7 +328,7 @@ bgvi_by_floor <- get_bgvi(
   floor = TRUE,
   floor_step = 3,
   workers = 2,
-  key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  key = Sys.getenv('OPENTOPO_API'),
   quiet = TRUE
 )
 
@@ -327,9 +367,3 @@ metric_table <- result |>
 head(metric_table)
 ```
 
-Residential classification is not part of this per-building pipeline.
-`get_residential()` is internal and unstable (its output columns are still
-being redesigned) and is not exported. For residential context, use
-`aggregate_block(residential = TRUE)` after `generate_block()` to get a
-block-level residential proportion (`res_prop`) computed directly from GHS
-built-up surface rasters — see the block-level analysis article.

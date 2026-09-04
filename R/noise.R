@@ -241,9 +241,6 @@ infer_osm_traffic <- function(roads,
 #' @param out_dir Optional output directory for a GeoPackage.
 #' @param write Logical. If `TRUE`, write layers to `noise_inputs.gpkg`.
 #' @param quiet Logical. If `TRUE`, suppress informational messages.
-#' @param ... Deprecated aliases. `buildings` maps to `x`; `height_col` maps to
-#' `height_field`.
-#'
 #' @return A list with prepared `sf`/`terra` layers and optional GeoPackage path.
 #' @export
 prepare_noisemodelling_inputs <- function(x = NULL,
@@ -268,19 +265,7 @@ prepare_noisemodelling_inputs <- function(x = NULL,
                                           green_ground = 1,
                                           out_dir = NULL,
                                           write = FALSE,
-                                          quiet = TRUE,
-                                          ...) {
-  dots <- list(...)
-  if (is.null(x) && !is.null(dots$buildings)) {
-    x <- dots$buildings
-  }
-  if (!is.null(dots$height_col)) {
-    height_field <- dots$height_col
-  }
-  unused <- setdiff(names(dots), c("buildings", "height_col"))
-  if (length(unused) > 0) {
-    stop("Unused argument(s): ", paste(unused, collapse = ", "), call. = FALSE)
-  }
+                                          quiet = TRUE) {
   if (is.null(x)) {
     if (!quiet) cli::cli_alert_info("Please input building footprint polygons.")
     return(NULL)
@@ -560,20 +545,7 @@ get_noise_map <- function(x = NULL,
                           iso_levels = c(35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 200),
                           iso_field = "LAEQ",
                           iso_smooth = 0.5,
-                          quiet = TRUE,
-                          ...) {
-  dots <- list(...)
-  if (is.null(x) && !is.null(dots$buildings)) {
-    x <- dots$buildings
-  }
-  if (!is.null(dots$height_col)) {
-    height_field <- dots$height_col
-  }
-  unused <- setdiff(names(dots), c("buildings", "height_col"))
-  if (length(unused) > 0) {
-    stop("Unused argument(s): ", paste(unused, collapse = ", "), call. = FALSE)
-  }
-
+                          quiet = TRUE) {
   if (is.null(x)) {
     if (!quiet) cli::cli_alert_info("Please input building footprint polygons.")
     return(NULL)
@@ -1217,11 +1189,13 @@ noise_band_labels <- function(lower, upper) {
 #' @param legend_cex Legend text size. Defaults to `0.85`.
 #' @param scalebar Logical. Draw a distance scale bar just below the legend
 #' (or in the bottom-left of the map when `legend = FALSE`). Defaults to
-#' `FALSE`. Distances assume a projected CRS in metres; for geographic
+#' `TRUE`. Distances assume a projected CRS in metres; for geographic
 #' coordinates they are approximated at the map's mid-latitude.
-#' @param scalebar_unit Scale bar unit: `"km"` (default), `"m"`, or `"auto"`
+#' @param scalebar_unit Scale bar unit: `"auto"` (default), `"km"`, or `"m"`
 #' to pick whichever keeps the label readable.
 #' @param scalebar_cex Scale bar label size. Defaults to `0.7`.
+#' @param north_arrow Logical. Draw a north arrow in the lower-left map area.
+#'   Defaults to `TRUE`.
 #' @param mar Margins (in lines) around the map panel. Defaults to a tight
 #' margin so the map fills the device.
 #' @param add Logical. If `TRUE`, add to the current plot.
@@ -1244,9 +1218,10 @@ plot_noise_map <- function(x,
                            legend = TRUE,
                            legend_width = 0.26,
                            legend_cex = 0.85,
-                           scalebar = FALSE,
-                           scalebar_unit = c("km", "m", "auto"),
+                           scalebar = TRUE,
+                           scalebar_unit = c("auto", "km", "m"),
                            scalebar_cex = 0.7,
+                           north_arrow = TRUE,
                            mar = c(0.2, 0.2, 0.2, 0.2),
                            add = FALSE,
                            ...) {
@@ -1267,6 +1242,7 @@ plot_noise_map <- function(x,
       scalebar = scalebar,
       scalebar_unit = scalebar_unit,
       scalebar_cex = scalebar_cex,
+      north_arrow = north_arrow,
       mar = mar,
       add = add,
       ...
@@ -1308,6 +1284,7 @@ plot_noise_map <- function(x,
     scalebar = scalebar,
     scalebar_unit = scalebar_unit,
     scalebar_cex = scalebar_cex,
+    north_arrow = north_arrow,
     mar = mar,
     add = add,
     ...
@@ -1441,14 +1418,35 @@ noise_map_draw_scalebar <- function(metres_per_inch,
   label <- paste(format(value, trim = TRUE, scientific = FALSE), unit)
   graphics::text(x0, y0, "0", adj = c(0.5, 1.35), cex = cex, col = col, xpd = NA)
   graphics::text(x1, y0, label, adj = c(0.5, 1.35), cex = cex, col = col, xpd = NA)
-  invisible(list(metres = metres, unit = unit, width_in = bar_in))
+  invisible(list(metres = metres, unit = unit, width_in = bar_in, height_in = height_in))
+}
+
+#' @noRd
+noise_map_draw_north_arrow <- function(x_in,
+                                       y_in,
+                                       height_in = 0.28,
+                                       cex = 0.7,
+                                       col = "#333333") {
+  x <- graphics::grconvertX(x_in, "inches", "user")
+  y0 <- graphics::grconvertY(y_in, "inches", "user")
+  y1 <- graphics::grconvertY(y_in + height_in, "inches", "user")
+  graphics::arrows(
+    x0 = x, y0 = y0, x1 = x, y1 = y1,
+    length = 0.07, lwd = 1.1, col = col, xpd = NA
+  )
+  graphics::text(
+    x, y1, "N",
+    font = 2, cex = cex, col = col, adj = c(0.5, -0.25), xpd = NA
+  )
+  invisible(NULL)
 }
 
 #' @noRd
 noise_map_scalebar_below_legend <- function(metres_per_inch,
                                             legend_info,
                                             unit = "km",
-                                            cex = 0.7) {
+                                            cex = 0.7,
+                                            north_arrow = FALSE) {
   if (is.null(metres_per_inch)) return(invisible(NULL))
   rect <- if (is.list(legend_info)) legend_info$rect else NULL
   if (is.null(rect)) return(invisible(NULL))
@@ -1456,11 +1454,21 @@ noise_map_scalebar_below_legend <- function(metres_per_inch,
   bottom_in <- graphics::grconvertY(rect$top - rect$h, "user", "inches") - 0.3
   right_in <- graphics::grconvertX(1, "npc", "inches")
   legend_w_in <- graphics::grconvertX(rect$left + rect$w, "user", "inches") - left_in
+  arrow_w_in <- if (isTRUE(north_arrow)) 0.28 else 0
+  gap_in <- if (isTRUE(north_arrow)) 0.12 else 0
   # Keep the bar roughly as wide as the legend box rather than the whole panel.
-  max_width_in <- min(right_in - left_in, max(legend_w_in, 1))
+  max_width_in <- min(right_in - left_in - arrow_w_in - gap_in, max(legend_w_in, 1))
+  if (isTRUE(north_arrow)) {
+    noise_map_draw_north_arrow(
+      x_in = left_in + arrow_w_in / 2,
+      y_in = bottom_in,
+      height_in = 0.26,
+      cex = cex
+    )
+  }
   noise_map_draw_scalebar(
     metres_per_inch,
-    x_in = left_in,
+    x_in = left_in + arrow_w_in + gap_in,
     y_in = bottom_in,
     max_width_in = max_width_in,
     unit = unit,
@@ -1469,19 +1477,64 @@ noise_map_scalebar_below_legend <- function(metres_per_inch,
 }
 
 #' @noRd
-noise_map_scalebar_in_map <- function(metres_per_inch, unit = "km", cex = 0.7) {
+noise_map_scalebar_in_map <- function(metres_per_inch,
+                                      unit = "km",
+                                      cex = 0.7,
+                                      north_arrow = FALSE) {
   if (is.null(metres_per_inch)) return(invisible(NULL))
   pin <- graphics::par("pin")
   left_in <- graphics::grconvertX(0.04, "npc", "inches")
   bottom_in <- graphics::grconvertY(0.08, "npc", "inches")
+  arrow_w_in <- if (isTRUE(north_arrow)) 0.28 else 0
+  gap_in <- if (isTRUE(north_arrow)) 0.12 else 0
+  if (isTRUE(north_arrow)) {
+    noise_map_draw_north_arrow(
+      x_in = left_in + arrow_w_in / 2,
+      y_in = bottom_in,
+      height_in = 0.26,
+      cex = cex
+    )
+  }
   noise_map_draw_scalebar(
     metres_per_inch,
-    x_in = left_in,
+    x_in = left_in + arrow_w_in + gap_in,
     y_in = bottom_in,
-    max_width_in = pin[1] * 0.3,
+    max_width_in = pin[1] * 0.3 - arrow_w_in - gap_in,
     unit = unit,
     cex = cex
   )
+}
+
+#' @noRd
+noise_map_north_arrow_in_map <- function(cex = 0.7, col = "#333333") {
+  usr <- graphics::par("usr")
+  if (!all(is.finite(usr))) return(invisible(NULL))
+  w <- usr[2] - usr[1]
+  h <- usr[4] - usr[3]
+  if (!is.finite(w) || !is.finite(h) || w <= 0 || h <= 0) {
+    return(invisible(NULL))
+  }
+
+  x <- usr[1] + 0.075 * w
+  y0 <- usr[3] + 0.120 * h
+  y1 <- usr[3] + 0.205 * h
+  pad_x <- 0.035 * w
+  graphics::rect(
+    x - pad_x, y0 - 0.035 * h,
+    x + pad_x, y1 + 0.055 * h,
+    col = grDevices::adjustcolor("white", alpha.f = 0.82),
+    border = NA,
+    xpd = NA
+  )
+  graphics::arrows(
+    x0 = x, y0 = y0, x1 = x, y1 = y1,
+    length = 0.1, lwd = 1.3, col = col, xpd = NA
+  )
+  graphics::text(
+    x, y1 + 0.035 * h, "N",
+    font = 2, cex = cex * 1.15, col = col, xpd = NA
+  )
+  invisible(NULL)
 }
 
 #' @noRd
@@ -1528,6 +1581,7 @@ plot_noise_surface_layers <- function(surface,
                                       scalebar = FALSE,
                                       scalebar_unit = "km",
                                       scalebar_cex = 0.7,
+                                      north_arrow = TRUE,
                                       mar = c(0.2, 0.2, 0.2, 0.2),
                                       add = FALSE,
                                       ...) {
@@ -1568,7 +1622,14 @@ plot_noise_surface_layers <- function(surface,
   map_scale <- if (isTRUE(scalebar)) noise_map_scale(bands) else NULL
   if (!isTRUE(legend) || isTRUE(add)) {
     if (isTRUE(scalebar)) {
-      noise_map_scalebar_in_map(map_scale, unit = scalebar_unit, cex = scalebar_cex)
+      noise_map_scalebar_in_map(
+        map_scale,
+        unit = scalebar_unit,
+        cex = scalebar_cex,
+        north_arrow = north_arrow
+      )
+    } else if (isTRUE(north_arrow)) {
+      noise_map_north_arrow_in_map(cex = scalebar_cex)
     }
     return(invisible(NULL))
   }
@@ -1586,8 +1647,11 @@ plot_noise_surface_layers <- function(surface,
       map_scale,
       legend_info,
       unit = scalebar_unit,
-      cex = scalebar_cex
+      cex = scalebar_cex,
+      north_arrow = north_arrow
     )
+  } else if (isTRUE(north_arrow)) {
+    noise_map_north_arrow_in_map(cex = scalebar_cex)
   }
   invisible(NULL)
 }
@@ -1606,6 +1670,7 @@ plot_noise_isophones_layers <- function(isophones,
                                         scalebar = FALSE,
                                         scalebar_unit = "km",
                                         scalebar_cex = 0.7,
+                                        north_arrow = TRUE,
                                         mar = c(0.2, 0.2, 0.2, 0.2),
                                         add = FALSE,
                                         ...) {
@@ -1642,7 +1707,14 @@ plot_noise_isophones_layers <- function(isophones,
   map_scale <- if (isTRUE(scalebar)) noise_map_scale(isophones) else NULL
   if (!isTRUE(legend) || isTRUE(add)) {
     if (isTRUE(scalebar)) {
-      noise_map_scalebar_in_map(map_scale, unit = scalebar_unit, cex = scalebar_cex)
+      noise_map_scalebar_in_map(
+        map_scale,
+        unit = scalebar_unit,
+        cex = scalebar_cex,
+        north_arrow = north_arrow
+      )
+    } else if (isTRUE(north_arrow)) {
+      noise_map_north_arrow_in_map(cex = scalebar_cex)
     }
     return(invisible(NULL))
   }
@@ -1661,8 +1733,11 @@ plot_noise_isophones_layers <- function(isophones,
       map_scale,
       legend_box,
       unit = scalebar_unit,
-      cex = scalebar_cex
+      cex = scalebar_cex,
+      north_arrow = north_arrow
     )
+  } else if (isTRUE(north_arrow)) {
+    noise_map_north_arrow_in_map(cex = scalebar_cex)
   }
   invisible(NULL)
 }

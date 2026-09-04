@@ -22,7 +22,6 @@ get_bgvi(
   x = NULL,
   datasource_canopy_height = "metachm",
   datasource_greenspace = NULL,
-  datasource = NULL,
   min_tree_height = 2,
   zoom = 17,
   radius = 800,
@@ -77,10 +76,6 @@ tile source for the visible-green feature layer. Supports \code{"esri"} and
 \code{"sentinel2"}. If both canopy height and greenspace sources are supplied,
 the visible-green layer is the union of height-filtered canopy and 2D
 greenspace.}
-
-\item{datasource}{character or \code{NULL}. Deprecated compatibility argument for
-older calls to \code{get_bgvi()}. Use \code{datasource_canopy_height} and
-\code{datasource_greenspace} instead.}
 
 \item{min_tree_height}{numeric. (only required for \code{get_bgvi} and \code{get_dng})
 When \code{datasource_canopy_height} is a canopy height source, minimum height threshold (in

@@ -54,8 +54,7 @@ get_noise_map(
   iso_levels = c(35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 200),
   iso_field = "LAEQ",
   iso_smooth = 0.5,
-  quiet = TRUE,
-  ...
+  quiet = TRUE
 )
 }
 \arguments{
@@ -215,9 +214,6 @@ for the NoiseModelling Delaunay grid.}
 \item{iso_smooth}{Smoothing coefficient passed to \code{Create_Isosurface.groovy}.}
 
 \item{quiet}{Logical. If \code{TRUE}, suppress informational messages.}
-
-\item{...}{Deprecated aliases. \code{buildings} maps to \code{x}; \code{height_col} maps to
-\code{height_field}.}
 }
 \value{
 Prepared noise input layers when \code{run = FALSE}; otherwise a list with

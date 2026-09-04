@@ -249,7 +249,133 @@ block_metrics |>
 surface raster divided by the area-weighted sum of the total built-up surface
 raster over each block polygon.
 
-## 3 A complete block analysis pipeline
+## 3 Visualizing block-level metrics
+
+Because `aggregate_block()` returns an `sf` polygon layer, block-level metrics
+can be mapped directly with `ggplot2::geom_sf()`. Choropleth maps are useful for
+checking whether high-density, high-volume, or high-population blocks cluster in
+expected parts of the study area.
+
+```{r eval=FALSE}
+library(ggplot2)
+
+ggplot(block_metrics) +
+  geom_sf(aes(fill = coverage_ratio), color = "white", linewidth = 0.15) +
+  scale_fill_viridis_c(
+    option = "magma",
+    labels = function(x) paste0(round(100 * x), "%"),
+    na.value = "grey90"
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    fill = "Coverage",
+    title = "Building coverage ratio by block"
+  ) +
+  theme_minimal()
+```
+
+For count or volume metrics, a transformed scale usually makes compact urban
+blocks easier to compare because a few very large blocks can otherwise dominate
+the color range.
+
+```{r eval=FALSE}
+ggplot(block_metrics) +
+  geom_sf(aes(fill = n_buildings), color = "grey85", linewidth = 0.1) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    trans = "sqrt",
+    na.value = "grey90"
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    fill = "Buildings",
+    title = "Number of buildings per block"
+  ) +
+  theme_minimal()
+
+ggplot(block_metrics) +
+  geom_sf(aes(fill = vol), color = NA) +
+  scale_fill_viridis_c(
+    option = "cividis",
+    trans = "log10",
+    labels = function(x) format(x, scientific = TRUE),
+    na.value = "grey90"
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    fill = "Volume",
+    title = "Total building volume by block"
+  ) +
+  theme_minimal()
+```
+
+When population or residential proportion has been requested, the same pattern
+can be used for demographic or land-use indicators:
+
+```{r eval=FALSE}
+ggplot(block_metrics) +
+  geom_sf(aes(fill = pop_total), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(
+    option = "inferno",
+    trans = "sqrt",
+    na.value = "grey90"
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    fill = "Population",
+    title = "Estimated population by block"
+  ) +
+  theme_minimal()
+
+ggplot(block_metrics) +
+  geom_sf(aes(fill = res_prop), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(
+    option = "viridis",
+    limits = c(0, 1),
+    labels = function(x) paste0(round(100 * x), "%"),
+    na.value = "grey90"
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    fill = "Residential",
+    title = "Residential built-up surface proportion by block"
+  ) +
+  theme_minimal()
+```
+
+To show how individual buildings relate to the block summary, join the
+block-level metric back to the building layer and draw buildings over the block
+polygons.
+
+```{r eval=FALSE}
+buildings_for_map <- block_result$buildings |>
+  left_join(
+    block_metrics |>
+      st_drop_geometry() |>
+      select(block_id, block_coverage_ratio = coverage_ratio),
+    by = "block_id"
+  )
+
+ggplot() +
+  geom_sf(data = block_metrics, fill = "grey95", color = "white",
+          linewidth = 0.15) +
+  geom_sf(data = buildings_for_map,
+          aes(fill = block_coverage_ratio),
+          color = "grey25", linewidth = 0.05) +
+  scale_fill_viridis_c(
+    option = "magma",
+    labels = function(x) paste0(round(100 * x), "%"),
+    na.value = "grey90"
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    fill = "Block coverage",
+    title = "Buildings colored by their block-level coverage ratio"
+  ) +
+  theme_minimal()
+```
+
+## 4 A complete block analysis pipeline
 
 The typical workflow is to fetch buildings, compute building-level metrics, and
 then generate and summarize blocks in sequence.

@@ -239,11 +239,8 @@ is diffuse horizontal irradiance, each as a numeric vector with one value per
 
 ### 6.1 Building surface visualization
 
-Setting `plot_3d = TRUE` renders a filled-polygon isometric view of the building
-scene with three panels (direct, diffuse, total). Each building facade is drawn
-as a stack of filled horizontal strips colored by radiation, and each roof is
-drawn as a filled projected footprint polygon. Buildings are composited
-back-to-front so the result looks like a solid 3D urban model.
+Use `plot = TRUE` for the default 2D radiation map. Set `plot_3d = TRUE` only
+when you also want the isometric direct, diffuse, and total radiation view.
 
 `grid_res` controls the horizontal and vertical sampling density of the surface
 grid. Smaller values create more strips per wall and a smoother color gradient:
@@ -478,10 +475,8 @@ radiation_ground <- get_radiation(
 )
 ```
 
-With `ground = TRUE`, `plot = TRUE` draws two panels — ground total radiation
-(rasterized, with building footprints masked out) and roof total radiation —
-sharing a single W/m² color bar so the two surfaces are directly comparable.
-Building shadows appear as pale patches on the ground panel.
+With `ground = TRUE`, `plot = TRUE` draws three 2D maps: ground surface,
+facade, and roof total radiation. The maps share one W/m² color bar.
 
 Separate the ground layer for further analysis:
 
@@ -494,8 +489,9 @@ summary(st_drop_geometry(ground_rad[, c("svf", "direct", "diffuse", "total")]))
 
 ### 7.2 Ground radiation with tree canopy
 
-Passing a canopy height map attenuates direct radiation on shaded ground
-points using `canopy_transmissivity`, exactly as for building surfaces.
+Passing a canopy height map attenuates shaded samples using
+`canopy_transmissivity`. With `plot = TRUE`, `get_radiation()` also plots the
+canopy impact as `canopy - no_canopy` total radiation.
 
 ```{r eval=FALSE}
 radiation_ground_trees <- get_radiation(
@@ -517,7 +513,7 @@ radiation_ground_trees <- get_radiation(
 )
 ```
 
-```{r}
+```{r eval=FALSE}
 ground_trees <- radiation_ground_trees[
   radiation_ground_trees$surface == "ground", ]
 

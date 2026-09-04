@@ -12,7 +12,9 @@ add_flow_vectors(
   colour = "black",
   alpha = 0.6,
   linewidth = 0.25,
-  arrow_size = 0.07
+  arrow_size = 0.07,
+  u_ref = NULL,
+  quiet = FALSE
 )
 }
 \arguments{
@@ -33,6 +35,13 @@ raster coordinates (usually metres).  Default 20.}
 \item{linewidth}{Numeric.  Line thickness in mm.  Default 0.25 (thin).}
 
 \item{arrow_size}{Numeric.  Arrowhead length in cm.  Default 0.07 (tiny).}
+
+\item{u_ref}{Numeric.  Speed (m/s) the longest arrow represents.  The
+default, \code{NULL}, normalises to the field's own maximum, which makes
+a near-stagnant field look as vigorous as a strong one; pass a fixed value
+to put several maps on one scale.}
+
+\item{quiet}{Logical.  Suppress the message reporting the arrow scale.}
 }
 \value{
 The same \code{ggplot} object with arrows added.

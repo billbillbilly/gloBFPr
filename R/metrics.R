@@ -515,9 +515,6 @@ get_neighbors <- function(x = NULL, radius = 500, quiet = FALSE) {
 #' \code{"sentinel2"}. If both canopy height and greenspace sources are supplied,
 #' the visible-green layer is the union of height-filtered canopy and 2D
 #' greenspace.
-#' @param datasource character or `NULL`. Deprecated compatibility argument for
-#' older calls to `get_bgvi()`. Use `datasource_canopy_height` and
-#' `datasource_greenspace` instead.
 #' @param min_tree_height numeric. (only required for `get_bgvi` and `get_dng`)
 #' When `datasource_canopy_height` is a canopy height source, minimum height threshold (in
 #' meters) to classify vegetation as trees in the CHM. Default is 2.
@@ -622,7 +619,6 @@ get_neighbors <- function(x = NULL, radius = 500, quiet = FALSE) {
 get_bgvi <- function(x = NULL,
                      datasource_canopy_height = "metachm",
                      datasource_greenspace = NULL,
-                     datasource = NULL,
                      min_tree_height = 2,
                      zoom = 17,
                      radius = 800,
@@ -657,53 +653,15 @@ get_bgvi <- function(x = NULL,
   terra::terraOptions(progress = 0)
   on.exit(terra::terraOptions(progress = old_terra_progress), add = TRUE)
 
-  normalize_source <- function(value, choices) {
-    if (inherits(value, "NULL")) return(NULL)
-    value <- tolower(as.character(value[1]))
-    if (value %in% c("none", "null", "na")) return(NULL)
-    match.arg(value, choices)
-  }
-  if (!inherits(datasource, "NULL")) {
-    datasource <- normalize_source(datasource, c("metachm", "ethchm", "esri", "sentinel2"))
-    if (datasource %in% c("metachm", "ethchm")) {
-      datasource_canopy_height <- datasource
-    } else {
-      datasource_canopy_height <- NULL
-      datasource_greenspace <- datasource
-    }
-  }
-  datasource_canopy_height <- normalize_source(datasource_canopy_height, c("metachm", "ethchm"))
-  datasource_greenspace <- normalize_source(datasource_greenspace, c("esri", "sentinel2"))
-  if (inherits(datasource_canopy_height, "NULL") && inherits(datasource_greenspace, "NULL")) {
-    stop("At least one of `datasource_canopy_height` or `datasource_greenspace` must be supplied.", call. = FALSE)
-  }
   floor_step <- as.integer(floor_step[1])
   if (is.na(floor_step) || floor_step < 1L) floor_step <- 1L
   short_building_threshold <- as.numeric(short_building_threshold[1])
   if (is.na(short_building_threshold) || short_building_threshold <= 0) {
     stop("`short_building_threshold` must be a positive numeric value in meters.", call. = FALSE)
   }
-  valid_directions <- c(
-    "southwest", "southeast", "northeast", "northwest",
-    "north", "east", "west", "south"
-  )
   if (!inherits(directions, "NULL")) {
-    directions <- unique(tolower(as.character(directions)))
-    invalid_directions <- setdiff(directions, valid_directions)
-    if (length(invalid_directions) > 0) {
-      stop(
-        sprintf(
-          "`directions` contains invalid value(s): %s. Valid values are: %s.",
-          paste(invalid_directions, collapse = ", "),
-          paste(valid_directions, collapse = ", ")
-        ),
-        call. = FALSE
-      )
-    }
-    field_of_view <- as.numeric(field_of_view[1])
-    if (is.na(field_of_view) || field_of_view <= 0 || field_of_view > 360) {
-      stop("`field_of_view` must be a numeric value greater than 0 and less than or equal to 360.", call. = FALSE)
-    }
+    directions <- validate_bgvi_directions(directions)
+    field_of_view <- validate_bgvi_field_of_view(field_of_view)
   } else {
     field_of_view <- NULL
   }
@@ -727,37 +685,20 @@ get_bgvi <- function(x = NULL,
 
   start_time <- Sys.time()
 
-  input_bbox <- get_bbox(x)
-  utm_crs <- get_utm_crs(input_bbox)
-  projected_poly <- sf::st_transform(x, utm_crs)
-  analysis_poly <- prepare_group_analysis_buildings(projected_poly)
-  analysis_bbox <- get_bbox(sf::st_buffer(projected_poly, dist = radius))
-  bbox_vector <- bbox_poly_to_list(analysis_bbox)
-
-  # Download DEM, optional canopy height, and optional 2D greenspace.
-  if (!quiet) cli::cli_alert_info('Start downloading BGVI raster inputs ...')
-  dem <- get_dem(bbox_vector, key)
-  chm_layers <- NULL
-  if (!inherits(datasource_canopy_height, "NULL")) {
-    chm_layers <- suppressMessages(get_chm(
-      bbox_vector,
-      min_tree_height,
-      datasource = datasource_canopy_height
-    ))
-  }
-  greenspace <- NULL
-  if (!inherits(datasource_greenspace, "NULL")) {
-    greenspace <- get_greenspace(
-      bbox = analysis_bbox,
-      buffer = NULL,
-      type = datasource_greenspace,
-      zoom = zoom,
-      year = year,
-      min_tree_height = min_tree_height
-    )
-  }
-
-  analysis_poly$g_area <- as.numeric(sf::st_area(analysis_poly))
+  bgvi_inputs <- prepare_bgvi_inputs(
+    x = x,
+    datasource_canopy_height = datasource_canopy_height,
+    datasource_greenspace = datasource_greenspace,
+    min_tree_height = min_tree_height,
+    zoom = zoom,
+    radius = radius,
+    year = year,
+    resolution = resolution,
+    key = key,
+    quiet = quiet
+  )
+  projected_poly <- bgvi_inputs$projected_poly
+  analysis_poly <- bgvi_inputs$analysis_poly
 
   if (isTRUE(floor)) {
     analysis_poly$estimated_floors <- round(analysis_poly$Height / 3)
@@ -773,84 +714,6 @@ get_bgvi <- function(x = NULL,
   analysis_poly$mean_gvi <- 0
   analysis_poly$bottom_gvi <- 0
   analysis_poly$top_gvi <- 0
-
-  # Build reusable, aligned AOI rasters once. Each target building then crops
-  # these rasters locally and flattens only its own footprint.
-  #
-  # Resolution and alignment mirror get_fused_dsm(): the target resolution is
-  # an explicit override if supplied, otherwise the *finer* of the DEM's and
-  # CHM's native resolutions (previously this silently collapsed to the
-  # DEM's native resolution regardless of a finer CHM, because the DEM was
-  # always used as the alignment reference). The building-height raster is
-  # built at that resolution and used as the alignment grid; continuous
-  # surfaces (DEM, CHM) are resampled onto it with bilinear interpolation
-  # (previously nearest-neighbor, which produces blocky terrain/canopy).
-  # Binary masks (tree cover, 2D greenspace) keep nearest-neighbor, which is
-  # correct for categorical 0/1 data.
-  # Reproject using analysis_bbox's UTM zone (not the outer `utm_crs`, which
-  # is derived from the unbuffered building extent): rasterize_height() and
-  # get_chm()/get_greenspace() all resolve their working CRS from
-  # analysis_bbox internally, and terra::resample() below assumes matching
-  # CRS rather than reprojecting, so this has to line up exactly with them.
-  analysis_utm_crs <- get_utm_crs(analysis_bbox)
-  dem_projected <- terra::project(dem, paste0("EPSG:", analysis_utm_crs), method = "bilinear")
-  dem_res <- terra::res(dem_projected)[1]
-
-  if (!inherits(resolution, "NULL")) {
-    raster_res <- as.numeric(resolution[1])
-    if (is.na(raster_res) || raster_res <= 0) {
-      stop("`resolution` must be a positive number (meters).", call. = FALSE)
-    }
-  } else if (!inherits(chm_layers, "NULL")) {
-    raster_res <- min(dem_res, terra::res(chm_layers[[1]])[1])
-  } else {
-    raster_res <- dem_res
-  }
-
-  bh_all <- rasterize_height(projected_poly, analysis_bbox, raster_res)
-  dem <- terra::resample(dem_projected, bh_all, method = "bilinear")
-  chm <- if (!inherits(chm_layers, "NULL")) {
-    terra::resample(chm_layers[[1]], bh_all, method = "bilinear")
-  } else {
-    terra::ifel(is.na(dem), NA, 0)
-  }
-  canopy_green_aligned <- if (!inherits(chm_layers, "NULL")) {
-    terra::resample(chm_layers[[2]], bh_all, method = "near")
-  } else {
-    NULL
-  }
-  tile_green_aligned <- if (!inherits(greenspace, "NULL")) {
-    terra::resample(greenspace, bh_all, method = "near")
-  } else {
-    NULL
-  }
-
-  binary_green <- terra::ifel(is.na(dem), NA, 0)
-  if (!is.null(canopy_green_aligned)) {
-    binary_green <- terra::ifel(canopy_green_aligned == 1, 1, binary_green)
-  }
-  if (!is.null(tile_green_aligned)) {
-    binary_green <- terra::ifel(tile_green_aligned == 1, 1, binary_green)
-  }
-
-  # ── Flat-roof base elevation (see get_fused_dsm()) ────────────────────────
-  # Each building gets one base ground elevation (DEM sampled at its
-  # centroid) added to its height, so `dem + bh_all` for that footprint
-  # doesn't warp to follow the terrain slope beneath it. This raster is
-  # combined with `dem`/`bh_all` per-building in compute_gvi_per_building().
-  flat_id_poly <- sf::st_transform(analysis_poly, analysis_utm_crs)
-  if (!"id" %in% names(flat_id_poly)) {
-    flat_id_poly$id <- seq_len(nrow(flat_id_poly))
-  }
-  bldg_id_rast <- rasterize_height(flat_id_poly, analysis_bbox, raster_res, height_field = "id")
-
-  flat_centroids <- suppressWarnings(sf::st_coordinates(sf::st_centroid(sf::st_geometry(flat_id_poly))))
-  flat_base_elev <- terra::extract(dem, flat_centroids[, 1:2, drop = FALSE], method = "bilinear")[, 1]
-  dem_median <- stats::median(terra::values(dem, mat = FALSE), na.rm = TRUE)
-  flat_base_elev[!is.finite(flat_base_elev)] <- dem_median
-
-  base_elev_rast <- terra::subst(bldg_id_rast, from = flat_id_poly$id, to = flat_base_elev)
-  binary_green <- terra::ifel(binary_green == 1, 1, 0)
 
   # --- Parallel Processing ---
   # cli::cli_alert_info('Preparing parallel processing ...')
@@ -870,12 +733,12 @@ get_bgvi <- function(x = NULL,
   bh_all_path <- tempfile(fileext = ".tif")
   base_elev_path <- tempfile(fileext = ".tif")
   bldg_id_path <- tempfile(fileext = ".tif")
-  terra::writeRaster(dem, dem_path, overwrite = TRUE)
-  terra::writeRaster(chm, chm_path, overwrite = TRUE)
-  terra::writeRaster(binary_green, binary_green_path, overwrite = TRUE)
-  terra::writeRaster(bh_all, bh_all_path, overwrite = TRUE)
-  terra::writeRaster(base_elev_rast, base_elev_path, overwrite = TRUE)
-  terra::writeRaster(bldg_id_rast, bldg_id_path, overwrite = TRUE)
+  terra::writeRaster(bgvi_inputs$dem, dem_path, overwrite = TRUE)
+  terra::writeRaster(bgvi_inputs$chm, chm_path, overwrite = TRUE)
+  terra::writeRaster(bgvi_inputs$binary_green, binary_green_path, overwrite = TRUE)
+  terra::writeRaster(bgvi_inputs$bh_all, bh_all_path, overwrite = TRUE)
+  terra::writeRaster(bgvi_inputs$base_elev, base_elev_path, overwrite = TRUE)
+  terra::writeRaster(bgvi_inputs$bldg_id, bldg_id_path, overwrite = TRUE)
   on.exit(unlink(c(dem_path, chm_path, binary_green_path, bh_all_path,
                    base_elev_path, bldg_id_path)), add = TRUE)
 
@@ -964,6 +827,212 @@ get_bgvi <- function(x = NULL,
   if (!quiet) time_taken(process_time)
 
   return(projected_poly)
+}
+
+#' Visualize an Individual Building BGVI Viewshed
+#'
+#' Computes and optionally plots the BGVI viewshed for one building and one
+#' viewpoint height. The function uses the same DSM, green feature layer, target
+#' footprint flattening, and flat-roof handling as [get_bgvi()], but returns the
+#' diagnostic layers for a single building instead of summary columns for every
+#' building.
+#'
+#' @param x sf. Building footprint polygons, typically output from
+#'   [search_3dglobdf()]. Must include a `Height` column.
+#' @param building Integer row number, or a value from the `id` column when `id`
+#'   is present.
+#' @param level Character. One of `"bottom"` or `"top"`. Ignored when `floor`
+#'   or `height` is supplied.
+#' @param floor Integer floor number to visualize. Floor 1 is 1.7 m above
+#'   ground; higher floors add 3 m each.
+#' @param height Numeric observer offset above ground in metres. Overrides
+#'   `level` and `floor` when supplied.
+#' @param orientation Optional sector orientation. Supply a bearing in degrees
+#'   clockwise from north, or one of `"north"`, `"northeast"`, `"east"`,
+#'   `"southeast"`, `"south"`, `"southwest"`, `"west"`, or `"northwest"`.
+#'   If `NULL`, the full viewshed is used.
+#' @param field_of_view Numeric angular width in degrees for `orientation`.
+#' @param datasource_canopy_height,datasource_greenspace,min_tree_height,zoom,radius,year,resolution,key,quiet
+#'   Passed to the BGVI raster preparation workflow; see [get_bgvi()].
+#' @param plot Logical. If `TRUE`, draw the viewshed map.
+#' @param scalebar Logical. If `TRUE`, add a scale bar using the package's
+#'   shared map layout.
+#' @param scalebar_unit Character. Unit for the scale bar: `"auto"`, `"km"`,
+#'   or `"m"`.
+#' @param scalebar_cex Numeric text size for the scale bar and north arrow.
+#' @param north_arrow Logical. If `TRUE`, add a north arrow.
+#' @param ... Additional arguments passed to the initial viewshed `plot()`.
+#'
+#' @return A list containing the selected `building`, `viewpoint`, observer
+#'   `height`, `gvi`, `green_area`, `viewshed`, `viewshed_raster`,
+#'   `viewshed_area`, `radius`, `visible_green`, `sector_mask`, `plot_raster`,
+#'   `dsm`, and `binary_green`.
+#'
+#' @examples
+#' \donttest{
+#' result <- plot_bgvi_viewshed(
+#'   globfp_example,
+#'   building = 1,
+#'   level = "top",
+#'   orientation = "south",
+#'   field_of_view = 60,
+#'   datasource_canopy_height = "metachm",
+#'   key = "YOUR_opentopography_API_KEY"
+#' )
+#' }
+#'
+#' @export
+plot_bgvi_viewshed <- function(x,
+                               building = 1,
+                               level = c("bottom", "top"),
+                               floor = NULL,
+                               height = NULL,
+                               orientation = NULL,
+                               field_of_view = 45,
+                               datasource_canopy_height = "metachm",
+                               datasource_greenspace = NULL,
+                               min_tree_height = 2,
+                               zoom = 17,
+                               radius = 800,
+                               year = NULL,
+                               resolution = NULL,
+                               key = NULL,
+                               plot = TRUE,
+                               scalebar = TRUE,
+                               scalebar_unit = c("auto", "km", "m"),
+                               scalebar_cex = 0.7,
+                               north_arrow = TRUE,
+                               quiet = FALSE,
+                               ...) {
+  if (inherits(x, "NULL")) {
+    if (!quiet) cli::cli_alert_info("Please input building footprint polygon generated by `search_3dglobdf()`.")
+    return(x)
+  }
+  if (!inherits(x, "sf")) {
+    stop("`x` must be an sf building footprint object.", call. = FALSE)
+  }
+  if (!"Height" %in% names(x)) {
+    stop("`x` must include a `Height` column.", call. = FALSE)
+  }
+  extra_args <- list(...)
+  if ("datasource" %in% names(extra_args)) {
+    stop("`datasource` is no longer supported by `plot_bgvi_viewshed()`; use `datasource_canopy_height` and `datasource_greenspace`.", call. = FALSE)
+  }
+  if (inherits(key, "NULL")) {
+    stop("API key for OpenTopography is missing.")
+  }
+  field_of_view <- validate_bgvi_field_of_view(field_of_view)
+  level <- match.arg(level)
+
+  original_timeout <- getOption("timeout")
+  on.exit(options(timeout = original_timeout), add = TRUE)
+  options(timeout = 9999)
+
+  old_terra_progress <- terra::terraOptions(print = FALSE)$progress
+  terra::terraOptions(progress = 0)
+  on.exit(terra::terraOptions(progress = old_terra_progress), add = TRUE)
+
+  bgvi_inputs <- prepare_bgvi_inputs(
+    x = x,
+    datasource_canopy_height = datasource_canopy_height,
+    datasource_greenspace = datasource_greenspace,
+    min_tree_height = min_tree_height,
+    zoom = zoom,
+    radius = radius,
+    year = year,
+    resolution = resolution,
+    key = key,
+    quiet = quiet
+  )
+
+  analysis_poly <- bgvi_inputs$analysis_poly
+  building_index <- resolve_bgvi_building_index(analysis_poly, building)
+  target_building <- analysis_poly[building_index, ]
+  scene <- prepare_bgvi_building_scene(
+    building = target_building,
+    dem = bgvi_inputs$dem,
+    chm = bgvi_inputs$chm,
+    binary_green = bgvi_inputs$binary_green,
+    bh_all = bgvi_inputs$bh_all,
+    base_elev = bgvi_inputs$base_elev,
+    bldg_id = bgvi_inputs$bldg_id,
+    radius = radius
+  )
+
+  observer_height <- resolve_bgvi_observer_height(
+    building = target_building,
+    level = level,
+    floor = floor,
+    height = height
+  )
+
+  if (!requireNamespace("viewscape", quietly = TRUE)) {
+    stop("Package 'viewscape' is required for this function. Install it with: install.packages('viewscape')", call. = FALSE)
+  }
+  viewshed <- viewscape::compute_viewshed(
+    dsm = scene$dsm,
+    viewpoints = scene$viewpoint,
+    offset_viewpoint = observer_height,
+    r = radius
+  )
+
+  feature <- scene$binary_green
+  sector_mask <- bgvi_sector_mask(feature, scene$viewpoint, orientation, field_of_view)
+  if (!inherits(orientation, "NULL")) {
+    center <- bgvi_orientation_to_bearing(orientation)
+    feature <- directional_green_feature_bearing(feature, scene$viewpoint, center, field_of_view)
+  }
+  gvi <- gvi_from_viewshed(viewshed, target_building, feature)
+  viewshed_raster <- align_bgvi_viewshed_raster(viewshed_to_spatraster(viewshed), feature)
+  visible_green <- terra::ifel(viewshed_raster > 0 & feature == 1, 1, NA)
+  plot_raster <- bgvi_plot_raster(
+    list(
+      viewshed_raster = viewshed_raster,
+      sector_mask = sector_mask,
+      binary_green = scene$binary_green,
+      visible_green = visible_green,
+      building = target_building,
+      orientation = orientation,
+      viewpoint = scene$viewpoint,
+      radius = radius
+    ),
+    buildings = bgvi_inputs$projected_poly
+  )
+
+  result <- list(
+    building = target_building,
+    viewpoint = scene$viewpoint,
+    height = observer_height,
+    level = if (is.null(height) && is.null(floor)) level else NULL,
+    floor = floor,
+    orientation = orientation,
+    field_of_view = if (is.null(orientation)) NULL else field_of_view,
+    radius = radius,
+    gvi = as.numeric(gvi$gvi),
+    green_area = as.numeric(gvi$green_area),
+    viewshed_area = as.numeric(gvi$viewshed_area),
+    viewshed = viewshed,
+    viewshed_raster = viewshed_raster,
+    visible_green = visible_green,
+    sector_mask = sector_mask,
+    plot_raster = plot_raster,
+    dsm = scene$dsm,
+    binary_green = scene$binary_green
+  )
+
+  if (isTRUE(plot)) {
+    plot_bgvi_viewshed_result(
+      result,
+      buildings = bgvi_inputs$projected_poly,
+      scalebar = scalebar,
+      scalebar_unit = scalebar_unit,
+      scalebar_cex = scalebar_cex,
+      north_arrow = north_arrow,
+      ...
+    )
+    return(invisible(result))
+  }
+  result
 }
 
 #' @description

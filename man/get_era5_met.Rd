@@ -8,7 +8,6 @@ get_era5_met(
   lon,
   lat,
   datetime,
-  hours_after_sunset = NULL,
   cds_key = Sys.getenv("CDS_API_KEY"),
   cache_dir = tempdir(),
   quiet = FALSE
@@ -21,11 +20,6 @@ get_era5_met(
 
 \item{datetime}{POSIXct or character \code{"YYYY-MM-DD HH:MM"} in UTC.
 ERA5 is available at full hours; the nearest hour is used automatically.}
-
-\item{hours_after_sunset}{Numeric or \code{NULL} (default).  When supplied,
-a simple nocturnal cooling model is applied to produce estimated surface
-temperatures by land-cover class (ready for \code{surface_temps} argument of
-\code{\link[=prepare_nocturnal_case]{prepare_nocturnal_case()}}).  Hours since sunset at the site.}
 
 \item{cds_key}{Character. CDS personal access token.  Defaults to the
 \code{CDS_API_KEY} environment variable.}
@@ -40,22 +34,18 @@ Default \code{tempdir()}.}
 A named list (invisibly) containing:
 \describe{
 \item{\code{inlet_velocity}}{\code{c(u, v, 0)} in m/s — direct input for
-\code{prepare_openfoam_case(inlet_velocity = ...)}.  x = east, y = north,
+\code{prepare_foam_case(inlet_velocity = ...)}.  x = east, y = north,
 matching a UTM-projected domain.}
 \item{\code{z_ref}}{Reference height for the wind measurement — always 10 m.}
-\item{\code{T_ref}}{ERA5 2-m air temperature in K — direct input for
-\code{prepare_nocturnal_case(T_ref = ...)}.}
+\item{\code{T_ref}}{ERA5 2-m air temperature in K. In wind-only
+\code{prepare_foam_case()} runs, this is used as the uniform reference
+temperature that switches buoyancy off.}
 \item{\code{T_skin}}{ERA5 skin (land-surface) temperature in K.  Useful as a
 \code{T_ground} estimate; \code{NULL} if unavailable.}
 \item{\code{wind_speed_ms}}{Scalar 10-m wind speed in m/s.}
 \item{\code{wind_dir_deg}}{Meteorological wind direction in degrees (direction
 FROM which the wind blows; 0 = from North, 90 = from East).}
 \item{\code{u10}, \code{v10}}{Raw ERA5 eastward and northward wind components (m/s).}
-\item{\code{surface_temps}}{Named numeric vector of estimated nocturnal surface
-temperatures in K for land-cover classes
-(\code{tree}, \code{grass}, \code{crop}, \code{built}, \code{bare}, \code{water}).
-Only present when \code{hours_after_sunset} is supplied.}
-\item{\code{hours_after_sunset}}{Echo of the \code{hours_after_sunset} argument.}
 \item{\code{datetime}}{Rounded POSIXct of the ERA5 time step used.}
 \item{\code{lon}, \code{lat}}{Site coordinates as supplied.}
 }
@@ -64,8 +54,7 @@ Only present when \code{hours_after_sunset} is supplied.}
 Downloads one hour of ERA5 reanalysis data (10-m wind components, 2-m
 temperature, skin temperature) from the Copernicus Climate Data Store for a
 single location and time step.  Returns the values pre-formatted for direct
-use as arguments to \code{\link[=prepare_openfoam_case]{prepare_openfoam_case()}} (daytime / wind-driven) and
-\code{\link[=prepare_nocturnal_case]{prepare_nocturnal_case()}} (nocturnal cold-air drainage).
+use as arguments to \code{\link[=prepare_foam_case]{prepare_foam_case()}} for wind simulation.
 
 ERA5 is a global reanalysis with 0.25° (~28 km) spatial resolution and
 hourly temporal resolution from 1940 to present.  It is \strong{not} a local
@@ -100,26 +89,22 @@ Sys.setenv(CDS_API_KEY = "your-token-here")
 met <- get_era5_met(
   lon               = -83.05,
   lat               =  42.34,
-  datetime          = "2023-07-15 22:00",
-  hours_after_sunset = 3
+  datetime          = "2023-07-15 22:00"
 )
 
-## ---- Daytime wind-driven simulation --------------------------------
-prepare_openfoam_case(
-  ...
+## ---- Wind simulation ------------------------------------------------
+prepare_foam_case(
+  case_dir       = "path/to/case",
+  stl_file       = "path/to/buildings.stl",
+  domain         = list(xmin = 0, xmax = 500, ymin = 0, ymax = 500,
+                        zmin = 0, zmax = 200),
   inlet_velocity = met$inlet_velocity,
-  z_ref          = met$z_ref
-)
-
-## ---- Nocturnal cold-air drainage simulation ------------------------
-prepare_nocturnal_case(
-  ...
-  T_ref         = met$T_ref,
-  surface_temps = met$surface_temps   # needs hours_after_sunset supplied
+  z_ref          = met$z_ref,
+  T_ref          = met$T_ref
 )
 }
 
 }
 \seealso{
-\code{\link[=prepare_openfoam_case]{prepare_openfoam_case()}}, \code{\link[=prepare_nocturnal_case]{prepare_nocturnal_case()}}
+\code{\link[=prepare_foam_case]{prepare_foam_case()}}
 }

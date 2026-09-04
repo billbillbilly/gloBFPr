@@ -24,24 +24,30 @@
 #'   source.
 #' @param plot Logical. For `get_shadow_footprint()`, draw a base R map of the
 #'   building footprints and shadow polygons before returning the `sf` result.
-#'   For `get_radiation()`, draw a base R map of radiation sample points colored
-#'   by `total`.
+#'   For `get_radiation()`, draw the default 2D base R radiation map colored by
+#'   `total`. When ground samples are included, the 2D layout shows separate
+#'   ground, facade, and roof maps with one shared legend. When canopy data are
+#'   supplied, a second 2D map shows canopy impact as `canopy - no_canopy`
+#'   total-radiation difference.
 #' @param plot_3d Logical. For `get_radiation()`, draw a base R 3D-style view
-#'   with separate panels for direct, diffuse, and total radiation.
+#'   with separate panels for direct, diffuse, and total radiation. This is
+#'   opt-in; `plot = TRUE` uses the 2D map layout by default.
 #' @param plot_overlap_gradient Logical. For `get_shadow_footprint()` plots with
 #'   multiple `solar_time` values, if `TRUE`, draw all shadows in transparent
 #'   gray so overlapping areas appear darker.
+#' @param scalebar Logical. Draw a distance scale bar using the shared map
+#'   layout. Defaults to `TRUE` for plotted maps.
+#' @param scalebar_unit Scale bar unit: `"auto"` (default), `"km"`, or `"m"`.
+#' @param scalebar_cex Scale bar label size. Defaults to `0.7`.
+#' @param north_arrow Logical. Draw a north arrow in the map panel. Defaults to
+#'   `TRUE`.
 #' @param shadow_locations Optional query locations for shadow height, as an
 #'   `sf` point layer or a `terra::SpatRaster`.
-#' @param ... Reserved for compatibility. `location` is accepted as a deprecated
-#'   alias of `shadow_locations`; `solar_pos`, `time`, and `combine` are accepted
-#'   as deprecated aliases.
 #' @param cell_size Numeric cell resolution in CRS units when
 #'   `shadow_locations` is omitted.
 #' @param extent_buffer Optional numeric buffer around `x` used when creating an
 #'   automatic `terra::SpatRaster` template. If omitted, a buffer is estimated
 #'   from building heights and solar elevation.
-#' @param parallel Ignored. Kept for API compatibility.
 #' @param filter_footprint Ignored. Shadow footprints are always used to limit
 #'   height calculations.
 #' @param min_tree_height Numeric. Minimum canopy height, in map units, used as
@@ -133,16 +139,16 @@ svf <- function(x = NULL,
                 observer_height = 1.7,
                 max_distance = NULL,
                 plot = FALSE,
-                quiet = TRUE,
-                ...) {
+                scalebar = TRUE,
+                scalebar_unit = c("auto", "km", "m"),
+                scalebar_cex = 0.7,
+                north_arrow = TRUE,
+                quiet = TRUE) {
   if (is.null(x)) {
     if (!quiet) cli::cli_alert_info("Please input building footprint polygons.")
     return(NULL)
   }
-  dots <- list(...)
-  if (length(dots) > 0) {
-    stop("Unused argument(s): ", paste(names(dots), collapse = ", "), call. = FALSE)
-  }
+  scalebar_unit <- match.arg(scalebar_unit)
   buildings <- prepare_shadow_buildings(x, height_field)
   if (!is.numeric(res_angle) || length(res_angle) != 1 || is.na(res_angle) ||
       res_angle <= 0 || res_angle > 360) {
@@ -185,7 +191,14 @@ svf <- function(x = NULL,
     max_distance = max_distance
   )
   if (isTRUE(plot)) {
-    plot_svf_raster(buildings, out)
+    plot_svf_raster(
+      buildings,
+      out,
+      scalebar = scalebar,
+      scalebar_unit = scalebar_unit,
+      scalebar_cex = scalebar_cex,
+      north_arrow = north_arrow
+    )
   }
   out
 }
@@ -212,38 +225,23 @@ get_shadow_footprint <- function(x = NULL,
                                  overlap_shadow = FALSE,
                                  plot = FALSE,
                                  plot_overlap_gradient = FALSE,
-                                 quiet = TRUE,
-                                 ...) {
+                                 scalebar = TRUE,
+                                 scalebar_unit = c("auto", "km", "m"),
+                                 scalebar_cex = 0.7,
+                                 north_arrow = TRUE,
+                                 quiet = TRUE) {
   if (is.null(x)) {
     if (!quiet) cli::cli_alert_info("Please input building footprint polygons.")
     return(NULL)
   }
-  dots <- list(...)
-  solar_args <- extract_deprecated_solar_args(dots)
-  dots <- solar_args$dots
-  if ("combine" %in% names(dots)) {
-    if (!identical(overlap_shadow, FALSE)) {
-      stop("Use only one of `overlap_shadow` or deprecated `combine`.", call. = FALSE)
-    }
-    warning(
-      "`combine` is deprecated; use `overlap_shadow` instead.",
-      call. = FALSE
-    )
-    overlap_shadow <- dots$combine
-  }
-  unknown_args <- setdiff(names(dots), "combine")
-  if (length(unknown_args) > 0) {
-    stop("Unused argument(s): ", paste(unknown_args, collapse = ", "), call. = FALSE)
-  }
+  scalebar_unit <- match.arg(scalebar_unit)
   buildings <- prepare_shadow_buildings(x, height_field)
   solar_pos <- resolve_solar_inputs(
     buildings,
     azimuth = azimuth,
     elevation = elevation,
     solar_time = solar_time,
-    time_zone = time_zone,
-    solar_pos = solar_args$solar_pos,
-    time = solar_args$time
+    time_zone = time_zone
   )
   sun_ids <- make_shadow_sun_ids(solar_time, nrow(solar_pos))
   raster_inputs <- resolve_shadow_raster_inputs(
@@ -293,7 +291,11 @@ get_shadow_footprint <- function(x = NULL,
         buildings,
         shadows,
         canopy = canopy,
-        plot_overlap_gradient = plot_overlap_gradient
+        plot_overlap_gradient = plot_overlap_gradient,
+        scalebar = scalebar,
+        scalebar_unit = scalebar_unit,
+        scalebar_cex = scalebar_cex,
+        north_arrow = north_arrow
       )
     }
     return(shadows)
@@ -303,7 +305,11 @@ get_shadow_footprint <- function(x = NULL,
       buildings,
       shadows,
       canopy = canopy,
-      plot_overlap_gradient = plot_overlap_gradient
+      plot_overlap_gradient = plot_overlap_gradient,
+      scalebar = scalebar,
+      scalebar_unit = scalebar_unit,
+      scalebar_cex = scalebar_cex,
+      north_arrow = north_arrow
     )
   }
   shadows
@@ -332,30 +338,11 @@ get_shadow_height <- function(x = NULL,
                               cell_size = 2,
                               extent_buffer = NULL,
                               b = 0.01,
-                              parallel = 1,
                               filter_footprint = FALSE,
-                              quiet = TRUE,
-                              ...) {
+                              quiet = TRUE) {
   if (is.null(x)) {
     if (!quiet) cli::cli_alert_info("Please input building footprint polygons.")
     return(NULL)
-  }
-  dots <- list(...)
-  solar_args <- extract_deprecated_solar_args(dots)
-  dots <- solar_args$dots
-  if ("location" %in% names(dots)) {
-    if (!is.null(shadow_locations)) {
-      stop("Use only one of `shadow_locations` or deprecated `location`.", call. = FALSE)
-    }
-    warning(
-      "`location` is deprecated; use `shadow_locations` instead.",
-      call. = FALSE
-    )
-    shadow_locations <- dots$location
-  }
-  unknown_args <- setdiff(names(dots), "location")
-  if (length(unknown_args) > 0) {
-    stop("Unused argument(s): ", paste(unknown_args, collapse = ", "), call. = FALSE)
   }
   buildings <- prepare_shadow_buildings(x, height_field)
   solar_pos <- resolve_solar_inputs(
@@ -363,9 +350,7 @@ get_shadow_height <- function(x = NULL,
     azimuth = azimuth,
     elevation = elevation,
     solar_time = solar_time,
-    time_zone = time_zone,
-    solar_pos = solar_args$solar_pos,
-    time = solar_args$time
+    time_zone = time_zone
   )
   raster_inputs <- resolve_shadow_raster_inputs(
     buildings = buildings,
@@ -429,23 +414,20 @@ get_radiation <- function(x = NULL,
                           radius = 500,
                           svf_res_angle = 15,
                           return_list = FALSE,
-                          parallel = 1,
                           plot = FALSE,
                           plot_3d = FALSE,
-                          quiet = TRUE,
-                          ...) {
+                          scalebar = TRUE,
+                          scalebar_unit = c("auto", "km", "m"),
+                          scalebar_cex = 0.7,
+                          north_arrow = TRUE,
+                          quiet = TRUE) {
   if (is.null(x)) {
     if (!quiet) cli::cli_alert_info("Please input building footprint polygons.")
     return(NULL)
   }
+  scalebar_unit <- match.arg(scalebar_unit)
   if (missing(solar_normal) || missing(solar_diffuse)) {
     stop("`solar_normal` and `solar_diffuse` are required.", call. = FALSE)
-  }
-  dots <- list(...)
-  solar_args <- extract_deprecated_solar_args(dots)
-  dots <- solar_args$dots
-  if (length(dots) > 0) {
-    stop("Unused argument(s): ", paste(names(dots), collapse = ", "), call. = FALSE)
   }
   buildings <- prepare_shadow_buildings(x, height_field)
   solar_pos <- resolve_solar_inputs(
@@ -453,9 +435,7 @@ get_radiation <- function(x = NULL,
     azimuth = azimuth,
     elevation = elevation,
     solar_time = solar_time,
-    time_zone = time_zone,
-    solar_pos = solar_args$solar_pos,
-    time = solar_args$time
+    time_zone = time_zone
   )
   check_radiation_vectors(solar_pos, solar_normal, solar_diffuse)
   check_canopy_transmissivity(canopy_transmissivity)
@@ -502,7 +482,36 @@ get_radiation <- function(x = NULL,
   out$diffuse <- rad$diffuse
   out$total <- rad$total
   if (isTRUE(plot)) {
-    plot_radiation_surface(buildings, out)
+    no_canopy <- NULL
+    if (!is.null(canopy)) {
+      if (!quiet) cli::cli_alert_info("Computing no-canopy radiation baseline for impact plot ...")
+      no_canopy <- compute_surface_radiation(
+        surface, buildings, solar_pos, solar_normal, solar_diffuse,
+        height_field, canopy = NULL, canopy_transmissivity = 1,
+        dem = raster_inputs$dem,
+        svf_res_angle = svf_res_angle,
+        radius = radius
+      )
+    }
+    plot_radiation_surface(
+      buildings,
+      out,
+      scalebar = scalebar,
+      scalebar_unit = scalebar_unit,
+      scalebar_cex = scalebar_cex,
+      north_arrow = north_arrow
+    )
+    if (!is.null(no_canopy)) {
+      plot_radiation_canopy_impact(
+        buildings,
+        out,
+        no_canopy,
+        scalebar = scalebar,
+        scalebar_unit = scalebar_unit,
+        scalebar_cex = scalebar_cex,
+        north_arrow = north_arrow
+      )
+    }
   }
   if (isTRUE(plot_3d)) {
     plot_radiation_surface_3d(buildings, out, height_field)

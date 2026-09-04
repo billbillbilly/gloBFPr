@@ -56,6 +56,7 @@ reference:
     indicators (greenery accessibility, neighbor exposure).
   contents:
   - get_metrics
+  - plot_bgvi_viewshed
 
 - title: Shadows and solar radiation
   desc: Sky view factor, shadow footprints/heights, and surface radiation.
@@ -86,8 +87,8 @@ reference:
   contents:
   - get_era5_met
   - prepare_openfoam_inputs
-  - prepare_openfoam_case
-  - prepare_nocturnal_case
+  - prepare_foam_geometry
+  - prepare_foam_case
   - run_openfoam_docker
   - sample_foam_slice
   - read_foam_pedestrian_slice

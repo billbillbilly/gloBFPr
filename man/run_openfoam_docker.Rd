@@ -15,7 +15,7 @@ run_openfoam_docker(
 \arguments{
 \item{case_dir}{Character. Absolute path to the OpenFOAM case directory.
 Must contain an \code{Allrun} script (written by
-\code{prepare_openfoam_case()}).}
+\code{prepare_foam_case()}).}
 
 \item{image}{Character. Docker image tag. Default
 \code{"opencfd/openfoam-run:2506"}. Use the tag you pulled, e.g.
@@ -42,14 +42,15 @@ the exit \code{status} (0 = success; only meaningful when
 }
 \description{
 Mounts the case directory into an OpenFOAM Docker container and executes
-the \code{Allrun} script produced by \code{prepare_openfoam_case()}.
-The script chains \code{blockMesh} → \code{snappyHexMesh} →
-\code{simpleFoam} and writes per-solver log files in \code{case_dir}.
+the \code{Allrun} script produced by \code{prepare_foam_case()}.
+The generated wind case chains \code{blockMesh} → \code{snappyHexMesh} →
+\code{buoyantBoussinesqPimpleFoam} and writes log files in
+\code{case_dir}.
 
 Docker Desktop must be running and the \code{case_dir} path must be under
 a directory shared with Docker (Docker Desktop → Settings → Resources →
 File Sharing).
 }
 \seealso{
-\code{\link{prepare_openfoam_case}}
+\code{\link{prepare_foam_case}}
 }

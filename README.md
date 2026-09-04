@@ -1,4 +1,4 @@
-# gloBFPr <a href="https://github.com/billbillbilly/gloBFPr/"><img src="logo.svg" alt="forestdata website" align="right" height="150"/></a>
+# gloBFPr <a href="https://github.com/billbillbilly/gloBFPr/"><img src="logo.svg" alt="logo" align="right" height="150"/></a>
 
 <!-- badges: start -->
 
@@ -12,7 +12,7 @@ Access and analyze the Building Footprint Datasets.
 
 The `gloBFPr` package allows R users to search, download, and process global building footprint tiles with associated height information, derived from the 3D-GloBFP dataset published by Che et al. (2024, 2025) and GlobalBuildingAtlas dataset by Zhu et al. (2025). With the building data, users can compute complex metrics of urban morphology and simulate urban environments about thermal and acoustic conditions. The package will look to include more global Building Dataset in the future.
 
-<img src="images/cover.png" align="center" width="90%"/>
+<img src="man/figures/cover.png" alt="Map and 3D visualization examples from gloBFPr" align="center" width="90%"/>
 
 ## Features
 
@@ -23,7 +23,7 @@ The `gloBFPr` package allows R users to search, download, and process global bui
 - Aggregate individual-building metrics into block-level summaries for city-scale analysis
 - Analyze shadow and radiation using building data for the analysis of urban heat conditions
 - Prepare screening-level urban road-noise modelling layers from building height, OSM roads, canopy height, and greenspace data, and run the integrated NoiseModelling workflow to produce noise maps
-- Prepare and run pedestrian-level wind and nocturnal thermal comfort simulations with OpenFOAM, and post-process/plot the resulting flow fields
+- Prepare and run pedestrian-level wind simulations with OpenFOAM
 
 ## Installation
 
@@ -45,11 +45,11 @@ Two `gloBFPr` workflows call out to external command-line software rather than b
 
 ### OpenFOAM (via Docker)
 
-`prepare_openfoam_case()` + `run_openfoam_docker()` (pedestrian wind) and `prepare_nocturnal_case()` (nocturnal thermal comfort) run OpenFOAM inside a Docker container, so no local OpenFOAM install is required.
+`prepare_foam_case()` + `run_openfoam_docker()` run pedestrian-level wind simulations with OpenFOAM inside a Docker container, so no local OpenFOAM install is required. The current development workflow uses `buoyantBoussinesqPimpleFoam` with URANS `kOmegaSST` for wind cases.
 
 1.  Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS/Windows) or Docker Engine (Linux), and make sure it is running.
 2.  No image pull step is needed — `run_openfoam_docker()` pulls the default image (`opencfd/openfoam-run:2506`) automatically on first use. To pre-pull it yourself: `docker pull opencfd/openfoam-run:2506`.
-3.  **macOS only:** Docker Desktop shares `/Users`, `/Volumes`, and `/tmp` by default. Put your case directory somewhere under your home folder (e.g. `prepare_openfoam_case(case_dir = "~/openfoam_demo", ...)`) rather than `tempdir()`/`/var/folders`, which Docker cannot see. If you get a "No such file or directory" or empty-mount error, add the case directory under Docker Desktop → Settings → Resources → File Sharing, then Apply & Restart.
+3.  **macOS only:** Docker Desktop shares `/Users`, `/Volumes`, and `/tmp` by default. Put your case directory somewhere under your home folder (e.g. `prepare_foam_case(case_dir = "~/openfoam_demo", ...)`) rather than `tempdir()`/`/var/folders`, which Docker cannot see. If you get a "No such file or directory" or empty-mount error, add the case directory under Docker Desktop → Settings → Resources → File Sharing, then Apply & Restart.
 4.  Verify Docker is reachable before running a case: `docker info`.
 
 ### NoiseModelling
@@ -76,7 +76,7 @@ You can avoid needing a key for `get_3d_world()` by setting `terrain = FALSE` (f
 
 ### Copernicus Climate Data Store (ERA5 weather data)
 
-Required by `get_era5_met()`, which fetches ERA5 reanalysis wind/temperature data as boundary conditions for `prepare_openfoam_case()` and `prepare_nocturnal_case()`.
+Required by `get_era5_met()`, which fetches ERA5 reanalysis wind/temperature data as boundary conditions for `prepare_foam_case()`.
 
 1.  Register for a free account at <https://cds.climate.copernicus.eu>.
 2.  Copy your personal access token from your CDS user profile page.
@@ -104,22 +104,22 @@ Error: permission denied ... required licences not accepted ... 403
 
 You do **not** need to tick any checkboxes on the CDS download form — those only build a manual download, and the web UI selection is ignored by the API. `get_era5_met()` specifies its own variables in the request:
 
-| CDS field    | Value                       | Used for                             |
-|--------------|-----------------------------|--------------------------------------|
-| Product type | `Reanalysis`                | —                                    |
-| Variable     | `10m_u_component_of_wind`   | `inlet_velocity[1]` (eastward, m/s)  |
-| Variable     | `10m_v_component_of_wind`   | `inlet_velocity[2]` (northward, m/s) |
-| Variable     | `2m_temperature`            | `T_ref` (ambient air temperature, K) |
-| Variable     | `skin_temperature`          | anchor for `surface_temps` (K)       |
+| CDS field | Value | Used for |
+|----|----|----|
+| Product type | `Reanalysis` | — |
+| Variable | `10m_u_component_of_wind` | `inlet_velocity[1]` (eastward, m/s) |
+| Variable | `10m_v_component_of_wind` | `inlet_velocity[2]` (northward, m/s) |
+| Variable | `2m_temperature` | `T_ref` (ambient air temperature, K) |
+| Variable | `skin_temperature` | optional `T_skin` ground-temperature estimate (K) |
 
 Note that `skin_temperature` is not in the form's "Popular" block; it appears under "Temperature and pressure". Again, this matters only if you are downloading manually.
 
 #### Notes on ERA5 data
 
--   Requests are queued server-side. A single-hour, small-area request usually returns in a minute or two, but can take longer under load. `get_era5_met()` blocks while polling, so it may appear to hang when it is only waiting.
--   Downloads are cached in `cache_dir` (default `tempdir()`), so repeated calls for the same location and hour are instant.
--   ERA5 has ~28 km spatial resolution and represents a grid-cell average. Local effects (urban heat islands, lake breezes, valley channelling) can cause site-level conditions to differ by 20–50%. Use it to set the synoptic background condition; supplement with a nearby weather station for high-stakes work.
--   `datetime` is interpreted as **UTC** and rounded to the nearest full hour.
+- Requests are queued server-side. A single-hour, small-area request usually returns in a minute or two, but can take longer under load. `get_era5_met()` blocks while polling, so it may appear to hang when it is only waiting.
+- Downloads are cached in `cache_dir` (default `tempdir()`), so repeated calls for the same location and hour are instant.
+- ERA5 has \~28 km spatial resolution and represents a grid-cell average. Local effects (urban heat islands, lake breezes, valley channelling) can cause site-level conditions to differ by 20–50%. Use it to set the synoptic background condition; supplement with a nearby weather station for high-stakes work.
+- `datetime` is interpreted as **UTC** and rounded to the nearest full hour.
 
 ## Usage
 
@@ -149,13 +149,13 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 
 <p align="center">
 
-<img src="images/BFshp.png?raw=true" width="45%"/>         <img src="images/BHshp.png?raw=true" width="45%"/>
+<img src="man/figures/BFshp.png" alt="Building footprint polygons" width="45%"/>         <img src="man/figures/BHshp.png" alt="Building height polygons" width="45%"/>
 
 </p>
 
 <p align="center">
 
-<img src="images/BF.png?raw=true" width="30%"/>         <img src="images/BH.png?raw=true" width="30%"/>         <img src="images/croppedBH.png?raw=true" width="30%"/>
+<img src="man/figures/BF.png" alt="Binary building footprint raster" width="30%"/>         <img src="man/figures/BH.png" alt="Building height raster" width="30%"/>         <img src="man/figures/croppedBH.png" alt="Cropped building height raster" width="30%"/>
 
 </p>
 
@@ -196,6 +196,112 @@ Setting `mask = TRUE` ensures the height raster is masked by the building footpr
 |  | Standard deviation of GVI | `sd_gvi` | Variation in greenery visibility across building height (if `floor = TRUE`) |
 |  | Estimated floors | `estimated_floors` | Estimated number of floors based on building height (if `floor = TRUE`) |
 
+4.  Simulate urban environments
+
+### Wind flow with OpenFOAM
+
+The current development workflow writes terrain-aware, canopy-aware wind cases
+for OpenFOAM and runs them through Docker.
+
+<img src="man/figures/wind_speed_direction.png" alt="Textured mesh 3D export from gloBFPr" height="250"/>
+
+``` r
+data(globfp_example)
+buildings_list <- list(poly = globfp_example, binary = NULL, graduated = NULL)
+
+foam_inputs <- prepare_openfoam_inputs(
+  case_dir          = file.path(path.expand("~"), "openfoam_demo"),
+  buildings_list    = buildings_list,
+  height_col        = "Height",
+  include_buildings = TRUE,
+  overwrite         = TRUE
+)
+
+case_files <- prepare_foam_case(
+  case_dir       = foam_inputs$case_dir,
+  stl_file       = foam_inputs$files$building_stl,
+  domain         = foam_inputs$domain,
+  inlet_velocity = c(5, 0, 0),
+  z_ref          = 10,
+  base_cell_size = 5,
+  sim_hours      = 0.5,
+  overwrite      = TRUE
+)
+
+run_openfoam_docker(foam_inputs$case_dir, wait = TRUE)
+wind_map <- read_foam_pedestrian_slice(foam_inputs$case_dir, resolution = 2)
+plot_foam_map(wind_map, layer = "U_mag", legend_title = "Speed (m/s)")
+```
+
+Use `get_era5_met()` when you want ERA5 wind and temperature boundary
+conditions, and `prepare_foam_geometry()` when you want DEM-derived terrain and
+canopy drag included in the case geometry.
+
+### Road-noise mapping
+
+`get_noise_map()` prepares building, road, ground-effect, receiver, and optional
+barrier layers for NoiseModelling. With `run = TRUE`, it can also launch the
+headless NoiseModelling workflow.
+
+<img src="man/figures/noise_advance.png" alt="Textured mesh 3D export from gloBFPr" height="250"/>
+
+``` r
+noise <- get_noise_map(
+  x        = buildings_list$poly,
+  run      = FALSE,
+  out_dir  = file.path(tempdir(), "noise_demo"),
+  receiver_spacing = 10
+)
+
+plot_noise_map(noise)
+```
+
+5.  3D reconstruction
+
+<img src="man/figures/mesh_sample.jpg" alt="Textured mesh 3D export from gloBFPr" height="250"/>
+
+<img src="man/figures/voxel_sample.jpg" alt="Voxel 3D export from gloBFPr" height="250"/>
+
+``` r
+library(gloBFPr)
+
+data(globfp_example)
+buildings <- globfp_example
+
+data(globfp_example_dem)
+data(globfp_example_canopy_height)
+
+world <- get_3d_world(
+  x              = buildings,
+  terrain        = TRUE,
+  dem            = rast(globfp_example_dem),
+  canopy_height  = rast(globfp_example_canopy_height),
+  canopy         = NULL,
+  roads          = "overture",
+  water          = "overture",
+  greenspace     = TRUE,
+  basemap        = TRUE,
+  facade_palette = TRUE,
+  out_dir        = file.path(tempdir(), "world_textured"),
+  quiet          = FALSE
+)
+
+world_vox <- get_3d_world(
+  x              = buildings,
+  terrain        = TRUE,
+  dem            = rast(globfp_example_dem),
+  canopy_height  = rast(globfp_example_canopy_height),
+  canopy         = NULL,
+  roads          = "overture",
+  water          = "overture",
+  greenspace     = TRUE,
+  facade_palette = TRUE,
+  all_vox        = TRUE,
+  vox_size       = 1,
+  out_dir        = file.path(tempdir(), "world_vox")
+)
+```
+
 ## Note
 
 The downloading process may take some time, depending on the number and size of building footprint tiles.
@@ -206,7 +312,7 @@ Please read the function documentation carefully. The dataset may require proper
 
 Noise preparation functions use OSM road class to infer default traffic speeds and vehicle volumes when observed traffic counts are unavailable. These defaults are intended for screening-level or scenario-based analysis and should be replaced with local traffic observations for calibrated noise maps.
 
-To run the integrated NoiseModelling workflow, call `get_noise_map(x = buildings, run = TRUE)`. Roads are downloaded from OSM using the building extent unless a road layer is supplied, and greenspace can be retrieved with `datasource_greenspace`. See [External software](#external-software) for how to set up Java and NoiseModelling (and OpenFOAM, for the wind/thermal workflows).
+To run the integrated NoiseModelling workflow, call `get_noise_map(x = buildings, run = TRUE)`. Roads are downloaded from OSM using the building extent unless a road layer is supplied, and greenspace can be retrieved with `datasource_greenspace`. See [External software](#external-software) for how to set up Java and NoiseModelling (and OpenFOAM, for the wind workflow).
 
 ## Other similar approaches
 

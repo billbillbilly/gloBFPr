@@ -19,9 +19,10 @@ plot_noise_map(
   legend = TRUE,
   legend_width = 0.26,
   legend_cex = 0.85,
-  scalebar = FALSE,
-  scalebar_unit = c("km", "m", "auto"),
+  scalebar = TRUE,
+  scalebar_unit = c("auto", "km", "m"),
   scalebar_cex = 0.7,
+  north_arrow = TRUE,
   mar = c(0.2, 0.2, 0.2, 0.2),
   add = FALSE,
   ...
@@ -65,13 +66,16 @@ Smaller values give the map more room. Defaults to \code{0.26}.}
 
 \item{scalebar}{Logical. Draw a distance scale bar just below the legend
 (or in the bottom-left of the map when \code{legend = FALSE}). Defaults to
-\code{FALSE}. Distances assume a projected CRS in metres; for geographic
+\code{TRUE}. Distances assume a projected CRS in metres; for geographic
 coordinates they are approximated at the map's mid-latitude.}
 
-\item{scalebar_unit}{Scale bar unit: \code{"km"} (default), \code{"m"}, or \code{"auto"}
+\item{scalebar_unit}{Scale bar unit: \code{"auto"} (default), \code{"km"}, or \code{"m"}
 to pick whichever keeps the label readable.}
 
 \item{scalebar_cex}{Scale bar label size. Defaults to \code{0.7}.}
+
+\item{north_arrow}{Logical. Draw a north arrow in the lower-left map area.
+Defaults to \code{TRUE}.}
 
 \item{mar}{Margins (in lines) around the map panel. Defaults to a tight
 margin so the map fills the device.}

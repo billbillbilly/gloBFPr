@@ -1,6 +1,6 @@
 Package: gloBFPr
 Type: Package
-Title: Building Environment Analysis Using Global Building Height Datasets
+Title: Urban Environment Analysis Using Global Building Height Datasets
 Version: 2.0.0
 Authors@R: c(
     person(
@@ -16,10 +16,10 @@ Description: Automated access and analysis of multidimensional building profile
     3D building footprint datasets.
     It includes functions to retrieve building height tiles, compute a range of
     2D/2.5D building morphology metrics, assess environmental context
-    (e.g., greenery accessibility),
-    aggregate metrics to the city-block scale, support noise, shadow/radiation, and wind/thermal
-    simulation, export study areas as 3D scenes (terrain, buildings, canopy)
-    for 3D modeling software, Rhino3D and Blender.
+    (e.g., greenery accessibility), aggregate metrics to the city-block scale, 
+    support noise, shadow/radiation, and wind simulation, export study areas as 
+    3D scenes (terrain, buildings, canopy)
+    for 3D modeling software, such as Rhino3D and Blender.
 License: MIT + file LICENSE
 URL: https://github.com/billbillbilly/gloBFPr, https://billbillbilly.github.io/gloBFPr/
 BugReports: https://github.com/billbillbilly/gloBFPr/issues

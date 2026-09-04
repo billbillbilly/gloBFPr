@@ -23,8 +23,11 @@ svf(
   observer_height = 1.7,
   max_distance = NULL,
   plot = FALSE,
-  quiet = TRUE,
-  ...
+  scalebar = TRUE,
+  scalebar_unit = c("auto", "km", "m"),
+  scalebar_cex = 0.7,
+  north_arrow = TRUE,
+  quiet = TRUE
 )
 
 get_shadow_footprint(
@@ -44,8 +47,11 @@ get_shadow_footprint(
   overlap_shadow = FALSE,
   plot = FALSE,
   plot_overlap_gradient = FALSE,
-  quiet = TRUE,
-  ...
+  scalebar = TRUE,
+  scalebar_unit = c("auto", "km", "m"),
+  scalebar_cex = 0.7,
+  north_arrow = TRUE,
+  quiet = TRUE
 )
 
 get_shadow_height(
@@ -65,10 +71,8 @@ get_shadow_height(
   cell_size = 2,
   extent_buffer = NULL,
   b = 0.01,
-  parallel = 1,
   filter_footprint = FALSE,
-  quiet = TRUE,
-  ...
+  quiet = TRUE
 )
 
 get_radiation(
@@ -95,11 +99,13 @@ get_radiation(
   radius = 500,
   svf_res_angle = 15,
   return_list = FALSE,
-  parallel = 1,
   plot = FALSE,
   plot_3d = FALSE,
-  quiet = TRUE,
-  ...
+  scalebar = TRUE,
+  scalebar_unit = c("auto", "km", "m"),
+  scalebar_cex = 0.7,
+  north_arrow = TRUE,
+  quiet = TRUE
 )
 }
 \arguments{
@@ -146,14 +152,23 @@ for \code{svf()}.}
 
 \item{plot}{Logical. For \code{get_shadow_footprint()}, draw a base R map of the
 building footprints and shadow polygons before returning the \code{sf} result.
-For \code{get_radiation()}, draw a base R map of radiation sample points colored
-by \code{total}.}
+For \code{get_radiation()}, draw the default 2D base R radiation map colored by
+\code{total}. When ground samples are included, the 2D layout shows separate
+ground, facade, and roof maps with one shared legend. When canopy data are
+supplied, a second 2D map shows canopy impact as \code{canopy - no_canopy}
+total-radiation difference.}
+
+\item{scalebar}{Logical. Draw a distance scale bar using the shared map
+layout. Defaults to \code{TRUE} for plotted maps.}
+
+\item{scalebar_unit}{Scale bar unit: \code{"auto"} (default), \code{"km"}, or \code{"m"}.}
+
+\item{scalebar_cex}{Scale bar label size. Defaults to \code{0.7}.}
+
+\item{north_arrow}{Logical. Draw a north arrow in the map panel. Defaults to
+\code{TRUE}.}
 
 \item{quiet}{Logical. If \code{FALSE}, emit progress messages.}
-
-\item{...}{Reserved for compatibility. \code{location} is accepted as a deprecated
-alias of \code{shadow_locations}; \code{solar_pos}, \code{time}, and \code{combine} are accepted
-as deprecated aliases.}
 
 \item{solar_time}{Character vector or list of character strings. Local solar
 times such as \code{"2026-06-21 15:00:00"}. If \code{solar_time} and \code{time_zone} are
@@ -184,8 +199,6 @@ gray so overlapping areas appear darker.}
 
 \item{cell_size}{Numeric cell resolution in CRS units when
 \code{shadow_locations} is omitted.}
-
-\item{parallel}{Ignored. Kept for API compatibility.}
 
 \item{filter_footprint}{Ignored. Shadow footprints are always used to limit
 height calculations.}
@@ -227,7 +240,8 @@ used when estimating Sky View Factor inside \code{get_radiation()}.}
 instead of a summed \code{sf} surface grid.}
 
 \item{plot_3d}{Logical. For \code{get_radiation()}, draw a base R 3D-style view
-with separate panels for direct, diffuse, and total radiation.}
+with separate panels for direct, diffuse, and total radiation. This is
+opt-in; \code{plot = TRUE} uses the 2D map layout by default.}
 }
 \value{
 \code{get_shadow_footprint()} returns an \code{sf} polygon layer.

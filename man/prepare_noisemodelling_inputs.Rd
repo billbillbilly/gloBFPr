@@ -27,8 +27,7 @@ prepare_noisemodelling_inputs(
   green_ground = 1,
   out_dir = NULL,
   write = FALSE,
-  quiet = TRUE,
-  ...
+  quiet = TRUE
 )
 }
 \arguments{
@@ -98,9 +97,6 @@ function when
 \item{write}{Logical. If \code{TRUE}, write layers to \code{noise_inputs.gpkg}.}
 
 \item{quiet}{Logical. If \code{TRUE}, suppress informational messages.}
-
-\item{...}{Deprecated aliases. \code{buildings} maps to \code{x}; \code{height_col} maps to
-\code{height_field}.}
 }
 \value{
 A list with prepared \code{sf}/\code{terra} layers and optional GeoPackage path.

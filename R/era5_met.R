@@ -8,8 +8,7 @@
 #' Downloads one hour of ERA5 reanalysis data (10-m wind components, 2-m
 #' temperature, skin temperature) from the Copernicus Climate Data Store for a
 #' single location and time step.  Returns the values pre-formatted for direct
-#' use as arguments to [prepare_openfoam_case()] (daytime / wind-driven) and
-#' [prepare_nocturnal_case()] (nocturnal cold-air drainage).
+#' use as arguments to [prepare_foam_case()] for wind simulation.
 #'
 #' ERA5 is a global reanalysis with 0.25° (~28 km) spatial resolution and
 #' hourly temporal resolution from 1940 to present.  It is **not** a local
@@ -36,10 +35,6 @@
 #' @param lat Numeric. Latitude of the site in decimal degrees (WGS-84).
 #' @param datetime POSIXct or character `"YYYY-MM-DD HH:MM"` in UTC.
 #'   ERA5 is available at full hours; the nearest hour is used automatically.
-#' @param hours_after_sunset Numeric or `NULL` (default).  When supplied,
-#'   a simple nocturnal cooling model is applied to produce estimated surface
-#'   temperatures by land-cover class (ready for `surface_temps` argument of
-#'   [prepare_nocturnal_case()]).  Hours since sunset at the site.
 #' @param cds_key Character. CDS personal access token.  Defaults to the
 #'   `CDS_API_KEY` environment variable.
 #' @param cache_dir Character. Directory for caching downloaded NetCDF files so
@@ -50,22 +45,18 @@
 #' @return A named list (invisibly) containing:
 #' \describe{
 #'   \item{`inlet_velocity`}{`c(u, v, 0)` in m/s — direct input for
-#'     `prepare_openfoam_case(inlet_velocity = ...)`.  x = east, y = north,
+#'     `prepare_foam_case(inlet_velocity = ...)`.  x = east, y = north,
 #'     matching a UTM-projected domain.}
 #'   \item{`z_ref`}{Reference height for the wind measurement — always 10 m.}
-#'   \item{`T_ref`}{ERA5 2-m air temperature in K — direct input for
-#'     `prepare_nocturnal_case(T_ref = ...)`.}
+#'   \item{`T_ref`}{ERA5 2-m air temperature in K. In wind-only
+#'     \code{prepare_foam_case()} runs, this is used as the uniform reference
+#'     temperature that switches buoyancy off.}
 #'   \item{`T_skin`}{ERA5 skin (land-surface) temperature in K.  Useful as a
 #'     `T_ground` estimate; `NULL` if unavailable.}
 #'   \item{`wind_speed_ms`}{Scalar 10-m wind speed in m/s.}
 #'   \item{`wind_dir_deg`}{Meteorological wind direction in degrees (direction
 #'     FROM which the wind blows; 0 = from North, 90 = from East).}
 #'   \item{`u10`, `v10`}{Raw ERA5 eastward and northward wind components (m/s).}
-#'   \item{`surface_temps`}{Named numeric vector of estimated nocturnal surface
-#'     temperatures in K for land-cover classes
-#'     (`tree`, `grass`, `crop`, `built`, `bare`, `water`).
-#'     Only present when `hours_after_sunset` is supplied.}
-#'   \item{`hours_after_sunset`}{Echo of the `hours_after_sunset` argument.}
 #'   \item{`datetime`}{Rounded POSIXct of the ERA5 time step used.}
 #'   \item{`lon`, `lat`}{Site coordinates as supplied.}
 #' }
@@ -78,32 +69,27 @@
 #' met <- get_era5_met(
 #'   lon               = -83.05,
 #'   lat               =  42.34,
-#'   datetime          = "2023-07-15 22:00",
-#'   hours_after_sunset = 3
+#'   datetime          = "2023-07-15 22:00"
 #' )
 #'
-#' ## ---- Daytime wind-driven simulation --------------------------------
-#' prepare_openfoam_case(
-#'   ...
+#' ## ---- Wind simulation ------------------------------------------------
+#' prepare_foam_case(
+#'   case_dir       = "path/to/case",
+#'   stl_file       = "path/to/buildings.stl",
+#'   domain         = list(xmin = 0, xmax = 500, ymin = 0, ymax = 500,
+#'                         zmin = 0, zmax = 200),
 #'   inlet_velocity = met$inlet_velocity,
-#'   z_ref          = met$z_ref
-#' )
-#'
-#' ## ---- Nocturnal cold-air drainage simulation ------------------------
-#' prepare_nocturnal_case(
-#'   ...
-#'   T_ref         = met$T_ref,
-#'   surface_temps = met$surface_temps   # needs hours_after_sunset supplied
+#'   z_ref          = met$z_ref,
+#'   T_ref          = met$T_ref
 #' )
 #' }
 #'
-#' @seealso [prepare_openfoam_case()], [prepare_nocturnal_case()]
+#' @seealso [prepare_foam_case()]
 #' @export
 get_era5_met <- function(
     lon,
     lat,
     datetime,
-    hours_after_sunset = NULL,
     cds_key   = Sys.getenv("CDS_API_KEY"),
     cache_dir = tempdir(),
     quiet     = FALSE
@@ -285,11 +271,11 @@ get_era5_met <- function(
 
   # ---- build result --------------------------------------------------------
   result <- list(
-    # direct args for prepare_openfoam_case()
+    # direct args for prepare_foam_case()
     inlet_velocity = c(u10, v10, 0),
     z_ref          = 10,
 
-    # direct arg for prepare_nocturnal_case()
+    # direct arg for prepare_foam_case()
     T_ref  = t2m,
     T_skin = if (!is.na(skt)) skt else NULL,
 
@@ -302,30 +288,6 @@ get_era5_met <- function(
     lon           = lon,
     lat           = lat
   )
-
-  # ---- optional nocturnal surface temperature model ------------------------
-  # Empirical cooling rates (K/h) from Oke (1987) and Erell et al. (2011).
-  # Vegetated surfaces cool faster due to reduced thermal mass and longwave
-  # emission; buildings track near-surface air temperature more closely.
-  # ERA5 skin temperature is used as the anchor where available; otherwise
-  # we estimate it from T2m minus a generic lapse.
-  if (!is.null(hours_after_sunset)) {
-    h <- as.numeric(hours_after_sunset)
-    if (!is.finite(h) || h < 0)
-      stop("`hours_after_sunset` must be a non-negative number.", call. = FALSE)
-
-    T_anchor <- if (!is.na(skt)) skt else (t2m - 1.5 * h)
-
-    result$surface_temps <- c(
-      tree  = round(T_anchor - 1.0  * h, 2),  # strong evapotranspiration cooling
-      grass = round(T_anchor - 0.7  * h, 2),
-      crop  = round(T_anchor - 0.6  * h, 2),
-      bare  = round(T_anchor - 0.5  * h, 2),
-      built = round(t2m      - 0.4  * h, 2),  # buildings track air T more closely
-      water = round(t2m      - 0.05 * h, 2)   # water has very high thermal mass
-    )
-    result$hours_after_sunset <- h
-  }
 
   # ---- print summary -------------------------------------------------------
   if (!isTRUE(quiet)) {
@@ -343,30 +305,10 @@ get_era5_met <- function(
     cat(sprintf("  Wind direction   : %.0f °  (FROM, met convention)\n", wdir))
     cat(sprintf("  u10, v10         : %+.2f, %+.2f m/s\n", u10, v10))
 
-    if (!is.null(result$surface_temps)) {
-      cat(sprintf("\n  Estimated surface temperatures  (%g h after sunset):\n", h))
-      for (nm in names(result$surface_temps))
-        cat(sprintf("    %-6s : %6.1f K  (%+.1f °C)\n",
-                    nm,
-                    result$surface_temps[[nm]],
-                    result$surface_temps[[nm]] - 273.15))
-    }
-
     cat("\n  --- Copy-paste ready ---\n")
     cat(sprintf("  inlet_velocity = c(%+.2f, %+.2f, 0)   # m/s (x=E, y=N)\n",
                 u10, v10))
     cat(sprintf("  T_ref          = %.1f               # K\n", t2m))
-    if (!is.null(result$surface_temps)) {
-      st <- result$surface_temps
-      cat(sprintf(
-        "  surface_temps  = c(tree=%.1f, grass=%.1f, crop=%.1f,\n",
-        st[["tree"]], st[["grass"]], st[["crop"]]
-      ))
-      cat(sprintf(
-        "                     bare=%.1f, built=%.1f, water=%.1f)\n",
-        st[["bare"]], st[["built"]], st[["water"]]
-      ))
-    }
     cat("\n")
   }
 

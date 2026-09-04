@@ -14,6 +14,7 @@ sample_foam_slice(
   interpolate = c("smooth", "focal", "none"),
   idw_power = 2,
   idw_maxdist = NULL,
+  buildings = NULL,
   quiet = FALSE
 )
 }
@@ -46,12 +47,23 @@ blur; decrease for sharper transitions near buildings.}
 
 \item{idw_maxdist}{Ignored (reserved for future use).}
 
+\item{buildings}{Optional \code{sf} polygon layer of building footprints in
+the domain's local coordinate system. When \code{NULL} (default) the
+footprints saved by \code{\link{prepare_openfoam_inputs}} are loaded
+automatically from
+\code{<case_dir>/constant/gloBFPr/metadata/buildings_openfoam.rds}.
+Building interiors are masked to \code{NA}, and the layer is attached to
+the returned raster so \code{\link{plot_foam_map}} overlays it without
+any extra argument. Pass \code{buildings = sf::st_sf(...)} to override,
+or note that masking is skipped when no footprints can be found.}
+
 \item{quiet}{Logical.  Default FALSE.}
 }
 \value{
 A \code{terra::SpatRaster} with layers named after the sampled
 fields.  Velocity \code{U} produces three extra layers:
-\code{U_mag} (speed), \code{Ux}, \code{Uy}.
+\code{U_mag} (speed), \code{Ux}, \code{Uy}.  Building footprints, when
+available, are attached as \code{attr(x, "buildings")}.
 }
 \description{
 Uses OpenFOAM's \code{postProcess -func surfaces} utility to cut a
@@ -59,10 +71,11 @@ horizontal plane at z = 1.5 m (or any height) through the latest
 time-step, then reads the resulting \code{.raw} files into R and
 returns a multi-layer \code{SpatRaster}.
 
-Works for both the wind case (\code{simpleFoam}) and the nocturnal case
-(\code{buoyantBoussinesqSimpleFoam}).  For the nocturnal case the slice
-is already written during the solver run via the \code{pedestrianSlice}
-function object; use \code{\link{read_foam_pedestrian_slice}} instead.
+For the current wind workflow, \code{prepare_foam_case()} already writes a
+pedestrian slice during the solver run via the \code{pedestrianSlice}
+function object; use \code{\link{read_foam_pedestrian_slice}} for that
+default 1.5 m output. Use this helper to sample other heights or fields
+after a run.
 }
 \seealso{
 \code{\link{plot_foam_map}}, \code{\link{read_foam_pedestrian_slice}}

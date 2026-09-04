@@ -586,7 +586,7 @@ testthat::test_that("get_noise_map reports missing NoiseModelling runner", {
 
   testthat::expect_error(
     gloBFPr::get_noise_map(
-      buildings = buildings,
+      x = buildings,
       roads = roads,
       run = TRUE,
       nm_path = tempfile(),

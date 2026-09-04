@@ -720,6 +720,13 @@ directional_green_feature <- function(binary_green, p, direction, field_of_view)
   if (is.null(center)) {
     stop(sprintf("Unsupported BGVI direction: %s", direction), call. = FALSE)
   }
+  directional_green_feature_bearing(binary_green, p, center, field_of_view)
+}
+
+#' @noRd
+directional_green_feature_bearing <- function(binary_green, p, center, field_of_view) {
+  center <- as.numeric(center[1]) %% 360
+  field_of_view <- as.numeric(field_of_view[1])
   if (field_of_view >= 360) return(binary_green)
 
   cells <- seq_len(terra::ncell(binary_green))
@@ -741,11 +748,316 @@ directional_green_feature <- function(binary_green, p, direction, field_of_view)
 }
 
 #' @noRd
+bgvi_sector_mask <- function(template, p, orientation, field_of_view) {
+  out <- template
+  terra::values(out) <- 0
+  if (inherits(orientation, "NULL") || length(orientation) == 0L || is.na(orientation[1])) {
+    terra::values(out) <- 1
+    return(out)
+  }
+  center <- bgvi_orientation_to_bearing(orientation)
+  if (field_of_view >= 360) {
+    terra::values(out) <- 1
+    return(out)
+  }
+  cells <- seq_len(terra::ncell(template))
+  xy <- terra::xyFromCell(template, cells)
+  dx <- xy[, 1] - p[1]
+  dy <- xy[, 2] - p[2]
+  bearing <- (atan2(dx, dy) * 180 / pi + 360) %% 360
+  angular_distance <- abs(((bearing - center + 180) %% 360) - 180)
+  values <- ifelse(!is.na(terra::values(template, mat = FALSE)) &
+                     angular_distance <= field_of_view / 2, 1, 0)
+  terra::values(out) <- values
+  out
+}
+
+#' @noRd
+bgvi_orientation_to_bearing <- function(orientation) {
+  direction_bearings <- c(
+    north = 0,
+    northeast = 45,
+    east = 90,
+    southeast = 135,
+    south = 180,
+    southwest = 225,
+    west = 270,
+    northwest = 315
+  )
+  if (is.character(orientation)) {
+    orientation <- tolower(orientation[1])
+    bearing <- direction_bearings[[orientation]]
+    if (is.null(bearing)) {
+      stop(sprintf(
+        "`orientation` must be a number of degrees clockwise from north or one of: %s.",
+        paste(names(direction_bearings), collapse = ", ")
+      ), call. = FALSE)
+    }
+    return(bearing)
+  }
+  bearing <- as.numeric(orientation[1])
+  if (is.na(bearing)) {
+    stop("`orientation` must be a valid bearing or direction name.", call. = FALSE)
+  }
+  bearing %% 360
+}
+
+#' @noRd
+resolve_bgvi_building_index <- function(x, building) {
+  if (length(building) != 1) {
+    stop("`building` must identify exactly one building.", call. = FALSE)
+  }
+  idx <- NA_integer_
+  if ("id" %in% names(x)) {
+    idx <- match(as.character(building), as.character(x$id))
+  }
+  if (is.na(idx)) {
+    idx <- suppressWarnings(as.integer(building))
+  }
+  if (is.na(idx) || idx < 1L || idx > nrow(x)) {
+    stop("`building` must be a valid row number or `id` value.", call. = FALSE)
+  }
+  idx
+}
+
+#' @noRd
+resolve_bgvi_observer_height <- function(building,
+                                         level = c("bottom", "top"),
+                                         floor = NULL,
+                                         height = NULL) {
+  level <- match.arg(level)
+  if (!is.null(height)) {
+    height <- as.numeric(height[1])
+    if (is.na(height) || height < 0) {
+      stop("`height` must be a non-negative observer offset in metres.", call. = FALSE)
+    }
+    return(height)
+  }
+  if (!is.null(floor)) {
+    floor <- as.integer(floor[1])
+    if (is.na(floor) || floor < 1L) {
+      stop("`floor` must be a positive integer.", call. = FALSE)
+    }
+    max_floor <- max(1L, round(as.numeric(building$Height[1]) / 3))
+    if (floor > max_floor) {
+      stop(sprintf("`floor` is above the estimated top floor (%s).", max_floor), call. = FALSE)
+    }
+    return(1.7 + (floor - 1L) * 3)
+  }
+  if (identical(level, "bottom")) {
+    return(1.7)
+  }
+  max(1.7, 1.7 + as.numeric(building$Height[1]) - 3)
+}
+
+#' @noRd
+viewshed_to_spatraster <- function(viewshed) {
+  terra::rast(
+    viewshed@visible,
+    extent = terra::ext(viewshed@extent, xy = TRUE),
+    crs = terra::crs(viewshed@crs)
+  )
+}
+
+#' @noRd
+align_bgvi_viewshed_raster <- function(viewshed_raster, template) {
+  if (!terra::same.crs(viewshed_raster, template)) {
+    viewshed_raster <- terra::project(viewshed_raster, template, method = "near")
+  }
+  terra::resample(viewshed_raster, template, method = "near")
+}
+
+#' @noRd
+bgvi_raster_has_values <- function(r) {
+  values <- terra::values(r, mat = FALSE)
+  any(!is.na(values) & is.finite(values))
+}
+
+#' @noRd
+bgvi_raster_bbox <- function(r) {
+  e <- terra::ext(r)
+  c(
+    xmin = terra::xmin(e),
+    xmax = terra::xmax(e),
+    ymin = terra::ymin(e),
+    ymax = terra::ymax(e)
+  )
+}
+
+#' @noRd
+bgvi_raster_geometry <- function(r) {
+  bb <- bgvi_raster_bbox(r)
+  sf::st_as_sfc(sf::st_bbox(bb, crs = terra::crs(r)))
+}
+
+#' @noRd
+draw_bgvi_raster_layer <- function(r, col) {
+  if (!bgvi_raster_has_values(r)) return(invisible(FALSE))
+  terra::plot(
+    r,
+    col = col,
+    legend = FALSE,
+    axes = FALSE,
+    add = TRUE
+  )
+  invisible(TRUE)
+}
+
+#' @noRd
+bgvi_plot_raster <- function(result, buildings = NULL) {
+  r <- result$viewshed_raster
+  terra::values(r) <- 1
+
+  sector <- if (!is.null(result$orientation)) {
+    result$sector_mask == 1
+  } else {
+    r == 1
+  }
+  visible <- result$viewshed_raster > 0 & sector
+  green <- result$binary_green == 1
+  visible_green <- result$visible_green == 1
+  radius_mask <- if (!is.null(result$radius) && !is.null(result$viewpoint)) {
+    xy <- terra::xyFromCell(r, seq_len(terra::ncell(r)))
+    dist <- sqrt((xy[, 1] - result$viewpoint[1])^2 + (xy[, 2] - result$viewpoint[2])^2)
+    mask <- r
+    terra::values(mask) <- dist <= result$radius
+    mask == 1
+  } else {
+    r == r
+  }
+
+  r <- terra::ifel(green, 3, r)
+  r <- terra::ifel(visible, 2, r)
+  r <- terra::ifel(visible_green, 4, r)
+
+  if (!is.null(buildings) && inherits(buildings, "sf")) {
+    building_mask <- terra::rasterize(terra::vect(buildings), r, field = 1, background = NA)
+    r <- terra::ifel(!is.na(building_mask) & radius_mask, 5, r)
+  }
+  target_mask <- terra::rasterize(terra::vect(result$building), r, field = 1, background = NA)
+  r <- terra::ifel(!is.na(target_mask) & radius_mask, 6, r)
+  r
+}
+
+#' @noRd
+plot_bgvi_viewshed_result <- function(result,
+                                      buildings,
+                                      scalebar = TRUE,
+                                      scalebar_unit = c("auto", "km", "m"),
+                                      scalebar_cex = 0.7,
+                                      north_arrow = TRUE,
+                                      ...) {
+  scalebar_unit <- match.arg(scalebar_unit)
+  plot_raster <- bgvi_plot_raster(result, buildings = buildings)
+  bb <- bgvi_raster_bbox(result$viewshed_raster)
+  map_geom <- bgvi_raster_geometry(result$viewshed_raster)
+  cols <- c(
+    "#F4F2EC",
+    "#D2D6D3",
+    "#B9D8A8",
+    "#159A63",
+    "#8F8F8F",
+    "#305CDE"
+  )
+  old_par <- open_shared_map_layout(map_geom, legend = TRUE)
+  on.exit(close_shared_map_layout(old_par, legend = TRUE), add = TRUE)
+
+  terra::plot(
+    plot_raster,
+    col = cols,
+    breaks = seq(0.5, 6.5, by = 1),
+    legend = FALSE,
+    axes = FALSE,
+    main = "",
+    ...
+  )
+  draw_bgvi_viewshed_caption(bb, result)
+  graphics::points(result$viewpoint[1], result$viewpoint[2],
+                   pch = 21, bg = "white", col = "black", cex = 1.1)
+
+  map_scale <- if (isTRUE(scalebar)) noise_map_scale(map_geom) else NULL
+  legend_info <- noise_map_draw_legend(
+    labels = c("Base map", "Viewshed area", "Green base", "Visible green",
+               "Building", "Target building"),
+    fills = cols,
+    title = "Layer",
+    reserve_in = if (isTRUE(scalebar)) 0.5 else 0
+  )
+  draw_shared_map_ornaments(
+    map_geom,
+    scalebar = scalebar,
+    scalebar_unit = scalebar_unit,
+    scalebar_cex = scalebar_cex,
+    north_arrow = north_arrow,
+    legend_info = legend_info,
+    map_scale = map_scale
+  )
+  invisible(plot_raster)
+}
+
+#' @noRd
+format_bgvi_direction <- function(orientation) {
+  if (is.null(orientation)) {
+    return("all")
+  }
+  if (is.numeric(orientation)) {
+    return(sprintf("%g deg", orientation %% 360))
+  }
+  as.character(orientation[1])
+}
+
+#' @noRd
+draw_bgvi_viewshed_caption <- function(bb, result, cex = 0.72) {
+  direction <- format_bgvi_direction(result$orientation)
+  fov <- if (is.null(result$field_of_view)) 360 else result$field_of_view
+  viewshed_area <- if (!is.null(result$viewshed_area)) result$viewshed_area else NA_real_
+  visible_green_area <- if (!is.null(result$green_area)) result$green_area else NA_real_
+  caption <- sprintf(
+    "Direction: %s FOV: %g deg viewshed area: %.3f km2 visible green area: %.3f km2",
+    direction,
+    fov,
+    viewshed_area / 1e6,
+    visible_green_area / 1e6
+  )
+
+  width <- as.numeric(bb[["xmax"]] - bb[["xmin"]])
+  height <- as.numeric(bb[["ymax"]] - bb[["ymin"]])
+  if (!is.finite(height) || height <= 0) {
+    usr <- graphics::par("usr")
+    height <- usr[4L] - usr[3L]
+  }
+  caption_cex <- cex
+  while (caption_cex > 0.48 &&
+         graphics::strwidth(caption, units = "user", cex = caption_cex) > width) {
+    caption_cex <- caption_cex - 0.04
+  }
+  lines <- caption
+  if (graphics::strwidth(caption, units = "user", cex = caption_cex) > width) {
+    avg_char_width <- max(graphics::strwidth("M", units = "user", cex = caption_cex), 1e-6)
+    wrap_width <- max(20L, floor(width / avg_char_width))
+    lines <- strwrap(caption, width = wrap_width)
+  }
+  line_height <- 0.045 * height
+  for (i in seq_along(lines)) {
+    graphics::text(
+      x = bb[["xmin"]],
+      y = bb[["ymin"]] - 0.055 * height - (i - 1L) * line_height,
+      labels = lines[i],
+      adj = c(0, 0.5),
+      font = 1,
+      cex = caption_cex,
+      xpd = NA
+    )
+  }
+  invisible(NULL)
+}
+
+#' @noRd
 gvi_from_viewshed <- function(viewshed, building, binary_green) {
   if (!requireNamespace("viewscape", quietly = TRUE)) {
     stop("Package 'viewscape' is required for this function. Install it with: install.packages('viewscape')", call. = FALSE)
   }
-  v_area <- length(as.vector(viewshed@visible[viewshed@visible == 1])) *
+  v_area <- length(as.vector(viewshed@visible[viewshed@visible > 0])) *
     viewshed@resolution[1]^2
   green_proportion <- viewscape::calculate_feature(
     viewshed = viewshed,
@@ -755,7 +1067,7 @@ gvi_from_viewshed <- function(viewshed, building, binary_green) {
   )
   green_area <- v_area * green_proportion
   gvi <- green_area / max(v_area - building$g_area, 1e-6)
-  list(gvi = min(gvi, 1), green_area = green_area)
+  list(gvi = min(gvi, 1), green_area = green_area, viewshed_area = v_area)
 }
 
 #' @noRd
@@ -1593,6 +1905,162 @@ unify_layers <- function(bbox, ...) {
 }
 
 #' @noRd
+normalize_bgvi_source <- function(value, choices) {
+  if (inherits(value, "NULL")) return(NULL)
+  value <- tolower(as.character(value[1]))
+  if (value %in% c("none", "null", "na")) return(NULL)
+  match.arg(value, choices)
+}
+
+#' @noRd
+validate_bgvi_directions <- function(directions) {
+  valid_directions <- c(
+    "southwest", "southeast", "northeast", "northwest",
+    "north", "east", "west", "south"
+  )
+  if (inherits(directions, "NULL")) return(NULL)
+  directions <- unique(tolower(as.character(directions)))
+  invalid_directions <- setdiff(directions, valid_directions)
+  if (length(invalid_directions) > 0) {
+    stop(
+      sprintf(
+        "`directions` contains invalid value(s): %s. Valid values are: %s.",
+        paste(invalid_directions, collapse = ", "),
+        paste(valid_directions, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+  directions
+}
+
+#' @noRd
+validate_bgvi_field_of_view <- function(field_of_view) {
+  field_of_view <- as.numeric(field_of_view[1])
+  if (is.na(field_of_view) || field_of_view <= 0 || field_of_view > 360) {
+    stop("`field_of_view` must be a numeric value greater than 0 and less than or equal to 360.", call. = FALSE)
+  }
+  field_of_view
+}
+
+#' @noRd
+prepare_bgvi_inputs <- function(x,
+                                datasource_canopy_height = "metachm",
+                                datasource_greenspace = NULL,
+                                min_tree_height = 2,
+                                zoom = 17,
+                                radius = 800,
+                                year = NULL,
+                                resolution = NULL,
+                                key = NULL,
+                                quiet = FALSE) {
+  datasource_canopy_height <- normalize_bgvi_source(datasource_canopy_height, c("metachm", "ethchm"))
+  datasource_greenspace <- normalize_bgvi_source(datasource_greenspace, c("esri", "sentinel2"))
+  if (inherits(datasource_canopy_height, "NULL") && inherits(datasource_greenspace, "NULL")) {
+    stop("At least one of `datasource_canopy_height` or `datasource_greenspace` must be supplied.", call. = FALSE)
+  }
+
+  input_bbox <- get_bbox(x)
+  utm_crs <- get_utm_crs(input_bbox)
+  projected_poly <- sf::st_transform(x, utm_crs)
+  analysis_poly <- prepare_group_analysis_buildings(projected_poly)
+  analysis_bbox <- get_bbox(sf::st_buffer(projected_poly, dist = radius))
+  bbox_vector <- bbox_poly_to_list(analysis_bbox)
+
+  if (!quiet) cli::cli_alert_info('Start downloading BGVI raster inputs ...')
+  dem <- get_dem(bbox_vector, key)
+  chm_layers <- NULL
+  if (!inherits(datasource_canopy_height, "NULL")) {
+    chm_layers <- suppressMessages(get_chm(
+      bbox_vector,
+      min_tree_height,
+      datasource = datasource_canopy_height
+    ))
+  }
+  greenspace <- NULL
+  if (!inherits(datasource_greenspace, "NULL")) {
+    greenspace <- get_greenspace(
+      bbox = analysis_bbox,
+      buffer = NULL,
+      type = datasource_greenspace,
+      zoom = zoom,
+      year = year,
+      min_tree_height = min_tree_height
+    )
+  }
+
+  analysis_poly$g_area <- as.numeric(sf::st_area(analysis_poly))
+  analysis_utm_crs <- get_utm_crs(analysis_bbox)
+  dem_projected <- terra::project(dem, paste0("EPSG:", analysis_utm_crs), method = "bilinear")
+  dem_res <- terra::res(dem_projected)[1]
+
+  if (!inherits(resolution, "NULL")) {
+    raster_res <- as.numeric(resolution[1])
+    if (is.na(raster_res) || raster_res <= 0) {
+      stop("`resolution` must be a positive number (meters).", call. = FALSE)
+    }
+  } else if (!inherits(chm_layers, "NULL")) {
+    raster_res <- min(dem_res, terra::res(chm_layers[[1]])[1])
+  } else {
+    raster_res <- dem_res
+  }
+
+  bh_all <- rasterize_height(projected_poly, analysis_bbox, raster_res)
+  dem <- terra::resample(dem_projected, bh_all, method = "bilinear")
+  chm <- if (!inherits(chm_layers, "NULL")) {
+    terra::resample(chm_layers[[1]], bh_all, method = "bilinear")
+  } else {
+    terra::ifel(is.na(dem), NA, 0)
+  }
+  canopy_green_aligned <- if (!inherits(chm_layers, "NULL")) {
+    terra::resample(chm_layers[[2]], bh_all, method = "near")
+  } else {
+    NULL
+  }
+  tile_green_aligned <- if (!inherits(greenspace, "NULL")) {
+    terra::resample(greenspace, bh_all, method = "near")
+  } else {
+    NULL
+  }
+
+  binary_green <- terra::ifel(is.na(dem), NA, 0)
+  if (!is.null(canopy_green_aligned)) {
+    binary_green <- terra::ifel(canopy_green_aligned == 1, 1, binary_green)
+  }
+  if (!is.null(tile_green_aligned)) {
+    binary_green <- terra::ifel(tile_green_aligned == 1, 1, binary_green)
+  }
+
+  flat_id_poly <- sf::st_transform(analysis_poly, analysis_utm_crs)
+  if (!"id" %in% names(flat_id_poly)) {
+    flat_id_poly$id <- seq_len(nrow(flat_id_poly))
+  }
+  bldg_id_rast <- rasterize_height(flat_id_poly, analysis_bbox, raster_res, height_field = "id")
+
+  flat_centroids <- suppressWarnings(sf::st_coordinates(sf::st_centroid(sf::st_geometry(flat_id_poly))))
+  flat_base_elev <- terra::extract(dem, flat_centroids[, 1:2, drop = FALSE], method = "bilinear")[, 1]
+  dem_median <- stats::median(terra::values(dem, mat = FALSE), na.rm = TRUE)
+  flat_base_elev[!is.finite(flat_base_elev)] <- dem_median
+
+  base_elev_rast <- terra::subst(bldg_id_rast, from = flat_id_poly$id, to = flat_base_elev)
+  binary_green <- terra::ifel(binary_green == 1, 1, 0)
+
+  list(
+    projected_poly = projected_poly,
+    analysis_poly = analysis_poly,
+    analysis_bbox = analysis_bbox,
+    dem = dem,
+    chm = chm,
+    binary_green = binary_green,
+    bh_all = bh_all,
+    base_elev = base_elev_rast,
+    bldg_id = bldg_id_rast,
+    radius = radius,
+    raster_res = raster_res
+  )
+}
+
+#' @noRd
 compute_gvi_per_building <- function(building,
                                      dem_path,
                                      chm_path,
@@ -1614,47 +2082,20 @@ compute_gvi_per_building <- function(building,
   base_elev <- if (!is.null(base_elev_path)) terra::rast(base_elev_path) else NULL
   bldg_id   <- if (!is.null(bldg_id_path)) terra::rast(bldg_id_path) else NULL
 
-  # Compute centroid
-  centroid <- suppressWarnings(sf::st_centroid(building$geometry))
-  p <- as.vector(sf::st_coordinates(centroid))
+  scene <- prepare_bgvi_building_scene(
+    building = building,
+    dem = dem,
+    chm = chm,
+    binary_green = binary_green,
+    bh_all = bh_all,
+    base_elev = base_elev,
+    bldg_id = bldg_id,
+    radius = radius
+  )
+  p <- scene$viewpoint
+  dsm_ <- scene$dsm
+  binary_green <- scene$binary_green
 
-  # Crop all rasters to the local viewshed radius.
-  buffer <- sf::st_buffer(centroid, dist = radius)
-  dem <- terra::crop(dem, terra::vect(buffer), mask = TRUE)
-  chm <- terra::crop(chm, terra::vect(buffer), mask = TRUE)
-  binary_green <- terra::crop(binary_green, terra::vect(buffer), mask = TRUE)
-  bh_all <- terra::crop(bh_all, terra::vect(buffer), mask = TRUE)
-  if (!is.null(base_elev)) base_elev <- terra::crop(base_elev, terra::vect(buffer), mask = TRUE)
-  if (!is.null(bldg_id))   bldg_id   <- terra::crop(bldg_id, terra::vect(buffer), mask = TRUE)
-
-  # Flatten the target building footprint: it is the observer, not an obstacle.
-  target_mask <- terra::rasterize(terra::vect(building), bh_all, field = 1, background = 0)
-  bh_without_target <- terra::ifel(target_mask == 1, 0, bh_all)
-  chm_without_target <- terra::ifel(target_mask == 1, 0, chm)
-  binary_green <- terra::ifel(target_mask == 1, 0, binary_green)
-
-  surface <- terra::ifel(chm_without_target > bh_without_target,
-                         chm_without_target,
-                         bh_without_target)
-  ground_dsm <- dem + surface
-
-  # Flatten neighboring buildings' roofs: each building keeps a single flat
-  # roof elevation (its own base ground elevation + height) instead of
-  # following the terrain slope pixel by pixel, matching get_fused_dsm().
-  # The target building's own footprint was already zeroed out above (its
-  # `bh_without_target` is 0 there), so it correctly reduces to ground level
-  # rather than getting a flat roof of its own.
-  if (!is.null(base_elev) && !is.null(bldg_id)) {
-    building_mask <- bldg_id > 0
-    flat_roof <- base_elev + bh_without_target
-    dsm_ <- terra::ifel(
-      building_mask,
-      terra::ifel(flat_roof > ground_dsm, flat_roof, ground_dsm),
-      ground_dsm
-    )
-  } else {
-    dsm_ <- ground_dsm
-  }
   get_gvi_values <- function(height) {
     if (inherits(directions, "NULL")) {
       return(get_gvi(dsm_, p, height, radius, building, binary_green))
@@ -1789,6 +2230,65 @@ compute_gvi_per_building <- function(building,
   }
 }
 
+#' @noRd
+prepare_bgvi_building_scene <- function(building,
+                                        dem,
+                                        chm,
+                                        binary_green,
+                                        bh_all,
+                                        base_elev = NULL,
+                                        bldg_id = NULL,
+                                        radius) {
+  # Compute centroid
+  centroid <- suppressWarnings(sf::st_centroid(building$geometry))
+  p <- as.vector(sf::st_coordinates(centroid))
+
+  # Crop all rasters to the local viewshed radius.
+  buffer <- sf::st_buffer(centroid, dist = radius)
+  dem <- terra::crop(dem, terra::vect(buffer), mask = TRUE)
+  chm <- terra::crop(chm, terra::vect(buffer), mask = TRUE)
+  binary_green <- terra::crop(binary_green, terra::vect(buffer), mask = TRUE)
+  bh_all <- terra::crop(bh_all, terra::vect(buffer), mask = TRUE)
+  if (!is.null(base_elev)) base_elev <- terra::crop(base_elev, terra::vect(buffer), mask = TRUE)
+  if (!is.null(bldg_id))   bldg_id   <- terra::crop(bldg_id, terra::vect(buffer), mask = TRUE)
+
+  # Flatten the target building footprint: it is the observer, not an obstacle.
+  target_mask <- terra::rasterize(terra::vect(building), bh_all, field = 1, background = 0)
+  bh_without_target <- terra::ifel(target_mask == 1, 0, bh_all)
+  chm_without_target <- terra::ifel(target_mask == 1, 0, chm)
+  binary_green <- terra::ifel(target_mask == 1, 0, binary_green)
+
+  surface <- terra::ifel(chm_without_target > bh_without_target,
+                         chm_without_target,
+                         bh_without_target)
+  ground_dsm <- dem + surface
+
+  # Flatten neighboring buildings' roofs: each building keeps a single flat
+  # roof elevation (its own base ground elevation + height) instead of
+  # following the terrain slope pixel by pixel, matching get_fused_dsm().
+  # The target building's own footprint was already zeroed out above (its
+  # `bh_without_target` is 0 there), so it correctly reduces to ground level
+  # rather than getting a flat roof of its own.
+  if (!is.null(base_elev) && !is.null(bldg_id)) {
+    building_mask <- bldg_id > 0
+    flat_roof <- base_elev + bh_without_target
+    dsm_ <- terra::ifel(
+      building_mask,
+      terra::ifel(flat_roof > ground_dsm, flat_roof, ground_dsm),
+      ground_dsm
+    )
+  } else {
+    dsm_ <- ground_dsm
+  }
+  list(
+    dsm = dsm_,
+    binary_green = binary_green,
+    target_mask = target_mask,
+    viewpoint = p,
+    centroid = centroid
+  )
+}
+
 #### utils ####
 time_taken <- function(process_time) {
   if (process_time >= 60) {
@@ -1824,56 +2324,16 @@ prepare_shadow_buildings <- function(x, height_field) {
   out
 }
 
-extract_deprecated_solar_args <- function(dots) {
-  solar_pos <- NULL
-  time <- NULL
-  if ("solar_pos" %in% names(dots)) {
-    warning(
-      "`solar_pos` is deprecated; use `azimuth` and `elevation` instead.",
-      call. = FALSE
-    )
-    solar_pos <- dots$solar_pos
-    dots$solar_pos <- NULL
-  }
-  if ("time" %in% names(dots)) {
-    warning(
-      "`time` is deprecated; use `solar_time` and `time_zone` instead.",
-      call. = FALSE
-    )
-    time <- dots$time
-    dots$time <- NULL
-  }
-  list(solar_pos = solar_pos, time = time, dots = dots)
-}
-
 resolve_solar_inputs <- function(x,
                                  azimuth = NULL,
                                  elevation = NULL,
                                  solar_time = NULL,
-                                 time_zone = NULL,
-                                 solar_pos = NULL,
-                                 time = NULL) {
+                                 time_zone = NULL) {
   if (!is.null(solar_time) || !is.null(time_zone)) {
     if (is.null(solar_time) || is.null(time_zone)) {
       stop("Both `solar_time` and `time_zone` must be supplied together.", call. = FALSE)
     }
     return(solar_position_from_time(x, solar_time, time_zone))
-  }
-  if (!is.null(time)) {
-    if (is.null(time_zone)) {
-      stop("Deprecated `time` requires `time_zone`; use `solar_time` and `time_zone`.", call. = FALSE)
-    }
-    return(solar_position_from_time(x, time, time_zone))
-  }
-  if (!is.null(solar_pos)) {
-    if (!is.null(azimuth) || !is.null(elevation)) {
-      warning(
-        "`solar_pos` was ignored because `azimuth` and `elevation` were supplied.",
-        call. = FALSE
-      )
-    } else {
-      return(validate_solar_pos(solar_pos))
-    }
   }
   validate_azimuth_elevation(azimuth, elevation)
 }
@@ -1891,14 +2351,6 @@ validate_azimuth_elevation <- function(azimuth, elevation) {
     stop("`azimuth` and `elevation` must contain numeric values.", call. = FALSE)
   }
   cbind(azimuth = azimuth %% 360, elevation = elevation)
-}
-
-validate_solar_pos <- function(solar_pos) {
-  solar_pos <- as.matrix(solar_pos)
-  if (ncol(solar_pos) < 2) {
-    stop("`solar_pos` must have at least two columns: azimuth and elevation.", call. = FALSE)
-  }
-  validate_azimuth_elevation(solar_pos[, 1], solar_pos[, 2])
 }
 
 normalize_solar_time <- function(solar_time, time_zone) {
@@ -2075,11 +2527,144 @@ combine_shadow_footprint_overlaps <- function(shadows) {
   do.call(rbind, out)
 }
 
+open_shared_map_layout <- function(geometry,
+                                   legend = TRUE,
+                                   legend_width = 0.26,
+                                   mar = c(2.0, 0.2, 0.2, 0.2)) {
+  noise_map_open_layout(
+    legend = legend,
+    legend_width = legend_width,
+    mar = mar,
+    asp_ratio = noise_bbox_aspect(geometry)
+  )
+}
+
+close_shared_map_layout <- function(old_par, legend = TRUE) {
+  noise_map_close_layout(old_par, legend = legend)
+}
+
+draw_shared_map_frame <- function(geometry, main = NULL) {
+  bb <- sf::st_bbox(geometry)
+  graphics::plot(
+    NA,
+    type = "n",
+    asp = 1,
+    axes = FALSE,
+    xlab = "",
+    ylab = "",
+    main = "",
+    xlim = c(bb[["xmin"]], bb[["xmax"]]),
+    ylim = c(bb[["ymin"]], bb[["ymax"]])
+  )
+  if (!is.null(main) && nzchar(main)) {
+    draw_shared_map_title_below(bb, main)
+  }
+  invisible(bb)
+}
+
+draw_shared_map_title_below <- function(bb, main, cex = 1.1) {
+  if (is.null(main) || !nzchar(main)) return(invisible(NULL))
+  h <- as.numeric(bb[["ymax"]] - bb[["ymin"]])
+  if (!is.finite(h) || h <= 0) h <- graphics::par("usr")[4L] - graphics::par("usr")[3L]
+  graphics::text(
+    x = mean(c(bb[["xmin"]], bb[["xmax"]])),
+    y = bb[["ymin"]] - 0.08 * h,
+    labels = main,
+    font = 2,
+    cex = cex,
+    xpd = NA
+  )
+  invisible(NULL)
+}
+
+draw_shared_map_ornaments <- function(geometry,
+                                      scalebar = TRUE,
+                                      scalebar_unit = "auto",
+                                      scalebar_cex = 0.7,
+                                      north_arrow = TRUE,
+                                      legend_info = NULL,
+                                      map_scale = NULL) {
+  if (!isTRUE(scalebar)) {
+    if (isTRUE(north_arrow)) {
+      noise_map_north_arrow_in_map(cex = scalebar_cex)
+    }
+    return(invisible(NULL))
+  }
+  if (is.null(map_scale)) {
+    map_scale <- noise_map_scale(geometry)
+  }
+  if (!is.null(legend_info)) {
+    noise_map_scalebar_below_legend(
+      map_scale,
+      legend_info,
+      unit = scalebar_unit,
+      cex = scalebar_cex,
+      north_arrow = north_arrow
+    )
+  } else {
+    noise_map_scalebar_in_map(
+      map_scale,
+      unit = scalebar_unit,
+      cex = scalebar_cex,
+      north_arrow = north_arrow
+    )
+  }
+  invisible(NULL)
+}
+
+draw_shared_colorbar_panel <- function(cols,
+                                       lo,
+                                       hi,
+                                       title = "",
+                                       cex = 0.85,
+                                       mar = c(0.2, 0.2, 0.2, 0.2),
+                                       reserve_in = 0) {
+  graphics::par(mar = c(mar[1], max(mar[2], 0.8), mar[3], 0.2))
+  graphics::plot.new()
+  pin <- graphics::par("pin")
+  y_centre <- if (reserve_in > 0 && pin[2] > 0) 0.5 + (reserve_in / 2) / pin[2] else 0.5
+  bar_h <- 0.58
+  bar_w <- 0.16
+  left <- 0.05
+  bottom <- y_centre - bar_h / 2
+  n <- length(cols)
+  ys <- seq(bottom, bottom + bar_h, length.out = n + 1L)
+  graphics::rect(left, ys[-(n + 1L)], left + bar_w, ys[-1L],
+                 col = cols, border = NA, xpd = NA)
+  graphics::rect(left, bottom, left + bar_w, bottom + bar_h,
+                 col = NA, border = "grey30", lwd = 0.6, xpd = NA)
+  if (is.finite(lo) && is.finite(hi)) {
+    ticks <- seq(lo, hi, length.out = 5L)
+    tick_y <- seq(bottom, bottom + bar_h, length.out = 5L)
+    graphics::segments(left + bar_w, tick_y, left + bar_w + 0.035, tick_y,
+                       col = "grey30", lwd = 0.6, xpd = NA)
+    graphics::text(left + bar_w + 0.055, tick_y,
+                   labels = format(signif(ticks, 3L), trim = TRUE),
+                   adj = c(0, 0.5), cex = cex * 0.75, xpd = NA)
+  }
+  if (nzchar(title)) {
+    graphics::text(left, bottom + bar_h + 0.08, title,
+                   adj = c(0, 0), cex = cex, font = 2, xpd = NA)
+  }
+  invisible(list(rect = list(left = left, top = bottom + bar_h, w = bar_w, h = bar_h)))
+}
+
 plot_shadow_footprints <- function(buildings,
                                    shadows,
                                    canopy = NULL,
-                                   plot_overlap_gradient = FALSE) {
-  graphics::plot(sf::st_geometry(buildings), col = NA, border = NA)
+                                   plot_overlap_gradient = FALSE,
+                                   scalebar = TRUE,
+                                   scalebar_unit = c("auto", "km", "m"),
+                                   scalebar_cex = 0.7,
+                                   north_arrow = TRUE) {
+  scalebar_unit <- match.arg(scalebar_unit)
+  map_geom <- sf::st_geometry(buildings)
+  if (!is.null(shadows) && nrow(shadows) > 0) {
+    map_geom <- c(map_geom, sf::st_geometry(shadows))
+  }
+  old_par <- open_shared_map_layout(map_geom, legend = TRUE)
+  on.exit(close_shared_map_layout(old_par, legend = TRUE), add = TRUE)
+  draw_shared_map_frame(map_geom)
   has_canopy <- !is.null(canopy) || ("shadow_source" %in% names(shadows) &&
     any(shadows$shadow_source == "canopy", na.rm = TRUE))
 
@@ -2089,13 +2674,15 @@ plot_shadow_footprints <- function(buildings,
     }
     graphics::plot(sf::st_geometry(buildings), col = "black", border = NA, add = TRUE)
     canopy_legend <- canopy_legend_items(canopy)
-    graphics::legend(
-      "topright",
-      legend = if (is.null(canopy)) "Building" else c("Building", canopy_legend$labels),
-      fill = if (is.null(canopy)) "black" else c("black", canopy_legend$fill),
-      border = NA,
-      bty = "n"
+    map_scale <- if (isTRUE(scalebar)) noise_map_scale(map_geom) else NULL
+    legend_info <- noise_map_draw_legend(
+      labels = if (is.null(canopy)) "Building" else c("Building", canopy_legend$labels),
+      fills = if (is.null(canopy)) "black" else c("black", canopy_legend$fill),
+      title = "Layer",
+      reserve_in = if (isTRUE(scalebar)) 0.5 else 0
     )
+    draw_shared_map_ornaments(map_geom, scalebar, scalebar_unit,
+                              scalebar_cex, north_arrow, legend_info, map_scale)
     return(invisible(NULL))
   }
 
@@ -2120,13 +2707,15 @@ plot_shadow_footprints <- function(buildings,
     }
     graphics::plot(sf::st_geometry(buildings), col = "black", border = NA, add = TRUE)
     canopy_legend <- canopy_legend_items(canopy)
-    graphics::legend(
-      "topright",
-      legend = c("Building", canopy_legend$labels, "Building shadow", "Canopy shadow"),
-      fill = c("black", canopy_legend$fill, source_style$fill[["building"]], source_style$fill[["canopy"]]),
-      border = NA,
-      bty = "n"
+    map_scale <- if (isTRUE(scalebar)) noise_map_scale(map_geom) else NULL
+    legend_info <- noise_map_draw_legend(
+      labels = c("Building", canopy_legend$labels, "Building shadow", "Canopy shadow"),
+      fills = c("black", canopy_legend$fill, source_style$fill[["building"]], source_style$fill[["canopy"]]),
+      title = "Layer",
+      reserve_in = if (isTRUE(scalebar)) 0.5 else 0
     )
+    draw_shared_map_ornaments(map_geom, scalebar, scalebar_unit,
+                              scalebar_cex, north_arrow, legend_info, map_scale)
     return(invisible(NULL))
   }
 
@@ -2153,6 +2742,7 @@ plot_shadow_footprints <- function(buildings,
   }
 
   graphics::plot(sf::st_geometry(buildings), col = "black", border = NA, add = TRUE)
+  map_scale <- if (isTRUE(scalebar)) noise_map_scale(map_geom) else NULL
   legend_labels <- "Shadow"
   legend_cols <- unname(shadow_cols[[1]])
   if ("sun_id" %in% names(shadows) &&
@@ -2161,13 +2751,14 @@ plot_shadow_footprints <- function(buildings,
     legend_labels <- paste("Shadow", names(shadow_cols), sep = ": ")
     legend_cols <- unname(shadow_cols)
   }
-  graphics::legend(
-    "topright",
-    legend = c("Building", legend_labels),
-    fill = c("black", legend_cols),
-    border = c("black", rep("grey30", length(legend_cols))),
-    bty = "n"
+  legend_info <- noise_map_draw_legend(
+    labels = c("Building", legend_labels),
+    fills = c("black", legend_cols),
+    title = "Layer",
+    reserve_in = if (isTRUE(scalebar)) 0.5 else 0
   )
+  draw_shared_map_ornaments(map_geom, scalebar, scalebar_unit,
+                            scalebar_cex, north_arrow, legend_info, map_scale)
   invisible(NULL)
 }
 
@@ -2859,13 +3450,37 @@ surface_svf <- function(surface,
   ), 0), 1)
 }
 
-plot_svf_raster <- function(buildings, svf_raster) {
+plot_svf_raster <- function(buildings,
+                            svf_raster,
+                            scalebar = TRUE,
+                            scalebar_unit = c("auto", "km", "m"),
+                            scalebar_cex = 0.7,
+                            north_arrow = TRUE) {
+  scalebar_unit <- match.arg(scalebar_unit)
+  cols <- grDevices::hcl.colors(100, "Cividis", rev = TRUE)
+  old_par <- open_shared_map_layout(sf::st_geometry(buildings), legend = TRUE)
+  on.exit(close_shared_map_layout(old_par, legend = TRUE), add = TRUE)
+
   graphics::plot(
     svf_raster,
-    col = grDevices::hcl.colors(100, "Cividis", rev = TRUE),
-    main = "Sky View Factor"
+    col = cols,
+    legend = FALSE,
+    axes = FALSE,
+    main = ""
   )
+  draw_shared_map_title_below(sf::st_bbox(buildings), "Sky View Factor")
   graphics::plot(sf::st_geometry(buildings), col = "black", border = NA, add = TRUE)
+  map_scale <- if (isTRUE(scalebar)) noise_map_scale(sf::st_geometry(buildings)) else NULL
+  rng <- range(terra::values(svf_raster), na.rm = TRUE)
+  legend_info <- draw_shared_colorbar_panel(
+    cols,
+    rng[1L],
+    rng[2L],
+    title = "SVF",
+    reserve_in = if (isTRUE(scalebar)) 0.5 else 0
+  )
+  draw_shared_map_ornaments(sf::st_geometry(buildings), scalebar, scalebar_unit,
+                            scalebar_cex, north_arrow, legend_info, map_scale)
   invisible(NULL)
 }
 
@@ -3065,9 +3680,20 @@ draw_colorbar <- function(cols, lo, hi, title = "", n_ticks = 5L) {
   invisible(NULL)
 }
 
-plot_radiation_surface <- function(buildings, radiation) {
+plot_radiation_surface <- function(buildings,
+                                   radiation,
+                                   scalebar = TRUE,
+                                   scalebar_unit = c("auto", "km", "m"),
+                                   scalebar_cex = 0.7,
+                                   north_arrow = TRUE) {
+  scalebar_unit <- match.arg(scalebar_unit)
   if (nrow(radiation) == 0) {
-    graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey40")
+    old_par <- open_shared_map_layout(sf::st_geometry(buildings), legend = FALSE)
+    on.exit(close_shared_map_layout(old_par, legend = FALSE), add = TRUE)
+    draw_shared_map_frame(sf::st_geometry(buildings), main = "Radiation")
+    graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey40", add = TRUE)
+    draw_shared_map_ornaments(sf::st_geometry(buildings), scalebar, scalebar_unit,
+                              scalebar_cex, north_arrow, NULL)
     return(invisible(NULL))
   }
   rad_cols <- radiation_palette(100L)
@@ -3085,7 +3711,10 @@ plot_radiation_surface <- function(buildings, radiation) {
   if (has_ground) {
     old_par <- graphics::par(no.readonly = TRUE)
     on.exit(graphics::par(old_par), add = TRUE)
-    graphics::par(mfrow = c(1L, 2L), mar = c(1, 1, 3, 1), oma = c(0, 0, 0, 5))
+    on.exit(graphics::layout(1L), add = TRUE)
+    graphics::layout(matrix(c(1L, 2L, 3L, 4L), nrow = 1L),
+                     widths = c(1, 1, 1, 0.32))
+    graphics::par(mar = c(2.0, 0.2, 0.2, 0.2))
 
     gnd_sf <- radiation[ground, ]
     bb     <- sf::st_bbox(buildings)
@@ -3100,25 +3729,30 @@ plot_radiation_surface <- function(buildings, radiation) {
     )
     bld_v <- terra::vect(sf::st_geometry(buildings))
 
-    # Shared W/m² scale across ground and roof so colours are comparable
-    total_rng <- range(c(radiation$total[ground], radiation$total[roof]),
-                       na.rm = TRUE)
-    brks <- seq(total_rng[1L], total_rng[2L], length.out = 101L)
+    # Shared W/m² scale across all 2D map panels so colours are comparable.
+    total_rng <- range(radiation$total, na.rm = TRUE)
+    plot_rng <- total_rng
+    if (!is.finite(diff(plot_rng)) || diff(plot_rng) == 0) {
+      pad <- max(abs(plot_rng[1L]) * 0.01, 1)
+      plot_rng <- c(plot_rng[1L] - pad, plot_rng[2L] + pad)
+    }
+    brks <- seq(plot_rng[1L], plot_rng[2L], length.out = 101L)
 
     # Both panels are set up with an identical empty base plot (same limits,
     # same aspect) so their plot regions match and the titles line up.
     new_panel <- function(main) {
       graphics::plot(NA, type = "n", asp = 1L, axes = FALSE,
-                     xlab = "", ylab = "", main = main,
+                     xlab = "", ylab = "", main = "",
                      xlim = c(bb[["xmin"]], bb[["xmax"]]),
                      ylim = c(bb[["ymin"]], bb[["ymax"]]))
+      draw_shared_map_title_below(bb, main)
     }
 
     # --- Left panel: ground total radiation ---
     gnd_r <- terra::rasterize(terra::vect(gnd_sf), tmpl,
                               field = "total", fun = "mean")
     gnd_r <- terra::mask(gnd_r, bld_v, inverse = TRUE)
-    new_panel("Ground total radiation (W/m²)")
+    new_panel("Ground total radiation (W/m2)")
     # Drawn with base graphics::image rather than terra::plot, because
     # terra::plot mutates par("mar") and would shift the next panel's title.
     gm <- terra::as.matrix(gnd_r, wide = TRUE)
@@ -3130,29 +3764,58 @@ plot_radiation_surface <- function(buildings, radiation) {
     )
     graphics::plot(sf::st_geometry(buildings),
                    col = "grey92", border = "grey35", lwd = 0.6, add = TRUE)
+    map_scale <- if (isTRUE(scalebar)) noise_map_scale(sf::st_geometry(buildings)) else NULL
+
+    # --- Middle panel: facade total radiation ---
+    new_panel("Facade total radiation (W/m2)")
+    graphics::plot(sf::st_geometry(buildings), col = "grey95",
+                   border = "grey45", add = TRUE)
+    if (any(facade)) {
+      graphics::points(
+        sf::st_coordinates(radiation[facade, ]),
+        pch = 16, cex = 0.35,
+        col = rad_cols[make_idx(radiation$total[facade], plot_rng)]
+      )
+    }
+    graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
 
     # --- Right panel: roof total radiation ---
-    new_panel("Roof total radiation (W/m²)")
+    new_panel("Roof total radiation (W/m2)")
     graphics::plot(sf::st_geometry(buildings), col = "grey95",
                    border = "grey45", add = TRUE)
     if (any(roof)) {
       graphics::points(
         sf::st_coordinates(radiation[roof, ]),
         pch = 16, cex = 0.75,
-        col = rad_cols[make_idx(radiation$total[roof], total_rng)]
+        col = rad_cols[make_idx(radiation$total[roof], plot_rng)]
       )
     }
     graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
-    # Single shared colour bar for both panels
-    draw_colorbar(rad_cols, total_rng[1L], total_rng[2L], title = "W/m²")
+    # Single shared colour bar for all panels.
+    legend_info <- draw_shared_colorbar_panel(
+      rad_cols,
+      total_rng[1L],
+      total_rng[2L],
+      title = "W/m2",
+      reserve_in = if (isTRUE(scalebar)) 0.5 else 0
+    )
+    if (isTRUE(scalebar)) {
+      noise_map_scalebar_below_legend(
+        map_scale,
+        legend_info,
+        unit = scalebar_unit,
+        cex = scalebar_cex,
+        north_arrow = north_arrow
+      )
+    }
 
   } else {
     # Building-only layout
-    old_par <- graphics::par(no.readonly = TRUE)
-    on.exit(graphics::par(old_par), add = TRUE)
-    graphics::par(mar = c(1, 1, 1, 4))
+    old_par <- open_shared_map_layout(sf::st_geometry(buildings), legend = TRUE)
+    on.exit(close_shared_map_layout(old_par, legend = TRUE), add = TRUE)
     total_rng <- range(radiation$total, na.rm = TRUE)
-    graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey45")
+    draw_shared_map_frame(sf::st_geometry(buildings), main = "Total radiation (W/m2)")
+    graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey45", add = TRUE)
     if (any(facade)) {
       graphics::plot(
         sf::st_geometry(radiation[facade, ]),
@@ -3170,7 +3833,164 @@ plot_radiation_surface <- function(buildings, radiation) {
       )
     }
     graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
-    draw_colorbar(rad_cols, total_rng[1L], total_rng[2L], title = "W/m²")
+    map_scale <- if (isTRUE(scalebar)) noise_map_scale(sf::st_geometry(buildings)) else NULL
+    legend_info <- draw_shared_colorbar_panel(
+      rad_cols,
+      total_rng[1L],
+      total_rng[2L],
+      title = "W/m2",
+      reserve_in = if (isTRUE(scalebar)) 0.5 else 0
+    )
+    draw_shared_map_ornaments(sf::st_geometry(buildings), scalebar, scalebar_unit,
+                              scalebar_cex, north_arrow, legend_info, map_scale)
+  }
+  invisible(NULL)
+}
+
+plot_radiation_canopy_impact <- function(buildings,
+                                         radiation,
+                                         no_canopy,
+                                         scalebar = TRUE,
+                                         scalebar_unit = c("auto", "km", "m"),
+                                         scalebar_cex = 0.7,
+                                         north_arrow = TRUE) {
+  scalebar_unit <- match.arg(scalebar_unit)
+  if (nrow(radiation) == 0 || is.null(no_canopy$total)) {
+    return(invisible(NULL))
+  }
+  impact <- radiation
+  impact$total_diff <- radiation$total - no_canopy$total
+  cols <- grDevices::colorRampPalette(c("#2C7BB6", "#FFFFBF", "#D7191C"))(100L)
+  make_idx <- function(vals, rng) {
+    if (!is.finite(diff(rng)) || diff(rng) == 0) return(rep(50L, length(vals)))
+    idx <- round((vals - rng[1L]) / diff(rng) * 99) + 1L
+    idx[is.na(idx)] <- 50L
+    pmin(pmax(idx, 1L), 100L)
+  }
+  ground <- impact$surface == "ground"
+  facade <- impact$surface == "facade"
+  roof <- impact$surface == "roof"
+  max_abs <- max(abs(impact$total_diff), na.rm = TRUE)
+  if (!is.finite(max_abs) || max_abs == 0) max_abs <- 1
+  diff_rng <- c(-max_abs, max_abs)
+
+  if (any(ground)) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
+    on.exit(graphics::layout(1L), add = TRUE)
+    graphics::layout(matrix(c(1L, 2L, 3L, 4L), nrow = 1L),
+                     widths = c(1, 1, 1, 0.32))
+    graphics::par(mar = c(2.0, 0.2, 0.2, 0.2))
+
+    bb <- sf::st_bbox(buildings)
+    n_gnd <- sum(ground)
+    gres <- sqrt(
+      (bb["xmax"] - bb["xmin"]) * (bb["ymax"] - bb["ymin"]) / max(n_gnd, 1L)
+    )
+    tmpl <- terra::rast(
+      xmin = unname(bb["xmin"]), xmax = unname(bb["xmax"]),
+      ymin = unname(bb["ymin"]), ymax = unname(bb["ymax"]),
+      resolution = gres, crs = sf::st_crs(buildings)$wkt
+    )
+    bld_v <- terra::vect(sf::st_geometry(buildings))
+    brks <- seq(diff_rng[1L], diff_rng[2L], length.out = 101L)
+    new_panel <- function(main) {
+      graphics::plot(NA, type = "n", asp = 1L, axes = FALSE,
+                     xlab = "", ylab = "", main = "",
+                     xlim = c(bb[["xmin"]], bb[["xmax"]]),
+                     ylim = c(bb[["ymin"]], bb[["ymax"]]))
+      draw_shared_map_title_below(bb, main)
+    }
+
+    gnd_r <- terra::rasterize(terra::vect(impact[ground, ]), tmpl,
+                              field = "total_diff", fun = "mean")
+    gnd_r <- terra::mask(gnd_r, bld_v, inverse = TRUE)
+    new_panel("Ground canopy impact (W/m2)")
+    gm <- terra::as.matrix(gnd_r, wide = TRUE)
+    graphics::image(
+      x = seq(terra::xmin(gnd_r), terra::xmax(gnd_r), length.out = ncol(gm) + 1L),
+      y = seq(terra::ymin(gnd_r), terra::ymax(gnd_r), length.out = nrow(gm) + 1L),
+      z = t(gm[nrow(gm):1L, , drop = FALSE]),
+      col = cols, breaks = brks, add = TRUE, useRaster = TRUE
+    )
+    graphics::plot(sf::st_geometry(buildings),
+                   col = "grey92", border = "grey35", lwd = 0.6, add = TRUE)
+    map_scale <- if (isTRUE(scalebar)) noise_map_scale(sf::st_geometry(buildings)) else NULL
+
+    new_panel("Facade canopy impact (W/m2)")
+    graphics::plot(sf::st_geometry(buildings), col = "grey95",
+                   border = "grey45", add = TRUE)
+    if (any(facade)) {
+      graphics::points(
+        sf::st_coordinates(impact[facade, ]),
+        pch = 16, cex = 0.35,
+        col = cols[make_idx(impact$total_diff[facade], diff_rng)]
+      )
+    }
+    graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+
+    new_panel("Roof canopy impact (W/m2)")
+    graphics::plot(sf::st_geometry(buildings), col = "grey95",
+                   border = "grey45", add = TRUE)
+    if (any(roof)) {
+      graphics::points(
+        sf::st_coordinates(impact[roof, ]),
+        pch = 16, cex = 0.75,
+        col = cols[make_idx(impact$total_diff[roof], diff_rng)]
+      )
+    }
+    graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+    legend_info <- draw_shared_colorbar_panel(
+      cols,
+      diff_rng[1L],
+      diff_rng[2L],
+      title = "W/m2",
+      reserve_in = if (isTRUE(scalebar)) 0.5 else 0
+    )
+    if (isTRUE(scalebar)) {
+      noise_map_scalebar_below_legend(
+        map_scale,
+        legend_info,
+        unit = scalebar_unit,
+        cex = scalebar_cex,
+        north_arrow = north_arrow
+      )
+    }
+  } else {
+    old_par <- open_shared_map_layout(sf::st_geometry(buildings), legend = TRUE)
+    on.exit(close_shared_map_layout(old_par, legend = TRUE), add = TRUE)
+    draw_shared_map_frame(
+      sf::st_geometry(buildings),
+      main = "Canopy impact - radiation difference (W/m2)"
+    )
+    graphics::plot(sf::st_geometry(buildings), col = "grey95", border = "grey45", add = TRUE)
+    if (any(facade)) {
+      graphics::plot(
+        sf::st_geometry(impact[facade, ]),
+        pch = 16, cex = 0.25,
+        col = cols[make_idx(impact$total_diff[facade], diff_rng)],
+        add = TRUE
+      )
+    }
+    if (any(roof)) {
+      graphics::plot(
+        sf::st_geometry(impact[roof, ]),
+        pch = 16, cex = 0.75,
+        col = cols[make_idx(impact$total_diff[roof], diff_rng)],
+        add = TRUE
+      )
+    }
+    graphics::plot(sf::st_geometry(buildings), col = NA, border = "grey30", add = TRUE)
+    map_scale <- if (isTRUE(scalebar)) noise_map_scale(sf::st_geometry(buildings)) else NULL
+    legend_info <- draw_shared_colorbar_panel(
+      cols,
+      diff_rng[1L],
+      diff_rng[2L],
+      title = "W/m2",
+      reserve_in = if (isTRUE(scalebar)) 0.5 else 0
+    )
+    draw_shared_map_ornaments(sf::st_geometry(buildings), scalebar, scalebar_unit,
+                              scalebar_cex, north_arrow, legend_info, map_scale)
   }
   invisible(NULL)
 }
@@ -3178,13 +3998,13 @@ plot_radiation_surface <- function(buildings, radiation) {
 plot_radiation_surface_3d <- function(buildings, radiation, height_field = "Height") {
   if (nrow(radiation) == 0L) {
     graphics::plot.new()
-    graphics::title("No radiation samples")
+    graphics::mtext("No radiation samples", side = 1, line = 0.6, font = 2)
     return(invisible(NULL))
   }
 
   old_par <- graphics::par(no.readonly = TRUE)
   on.exit(graphics::par(old_par), add = TRUE)
-  graphics::par(mfrow = c(1L, 3L), mar = c(1, 1, 3, 1), oma = c(0, 0, 0, 4))
+  graphics::par(mfrow = c(1L, 3L), mar = c(2, 1, 1, 1), oma = c(0, 0, 0, 4))
 
   fields <- c("direct", "diffuse", "total")
   titles <- c("Direct radiation", "Diffuse radiation", "Total radiation")
@@ -3236,7 +4056,8 @@ plot_radiation_surface_3d <- function(buildings, radiation, height_field = "Heig
     vals <- radiation[[fld]]
 
     graphics::plot(xlim, ylim, type = "n", axes = FALSE,
-                   xlab = "", ylab = "", asp = 1L, main = titles[fi])
+                   xlab = "", ylab = "", asp = 1L, main = "")
+    graphics::mtext(titles[fi], side = 1, line = 0.6, font = 2, cex = 1.1)
 
     for (b in bld_ord) {
       h <- bld_h[b]
