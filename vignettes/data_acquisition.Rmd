@@ -1,0 +1,239 @@
+---
+title: "gloBFPr_data_acquisition"
+author: "Xiaohao Yang"
+vignette: >
+  %\VignetteIndexEntry{gloBFPr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## 1 Retrieve Building Footprints with Heights Using a Bounding Box
+
+Set `out_type = "all"` o return a comprehensive list of outputs, including:
+- `poly`: an `sf` object of building footprints,
+- `binary`: a `terra` raster indicating presence/absence of buildings, and
+- `graduated`: a `terra` raster representing building height.
+
+Specify `cell_size = 1` to generate raster layers with 1-meter resolution, ensuring detailed spatial representation of building geometries within the defined area of interest.
+
+```{r eval=FALSE}
+buildings_list <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
+                                           out_type = "all", 
+                                           cell_size = 1)
+```
+
+Setting `mask = TRUE` ensures the height raster is masked by the building footprints.
+
+```{r eval=FALSE}
+buildings_rast <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
+                                           out_type = "graduated_rast", 
+                                           mask = TRUE, 
+                                           cell_size = 1)
+```
+
+Setting `data_source = "GBA"` to get building data from GlobalBuildingAtlas.
+
+```{r eval=FALSE}
+buildings_gba <- gloBFPr::search_3dglobdf(bbox = c(-83.065644,42.333792,-83.045217,42.346988),
+                                           out_type = "poly", 
+                                           data_source = "GBA")
+```
+
+## 2 Build a Fused Digital Surface Model from Building Height Data
+
+`get_fused_dsm()` combines three raster sources into a single digital surface
+model (DSM): an OpenTopography-derived terrain DEM, an optional canopy height
+model, and building heights rasterized from the footprint polygon. The result
+is `DEM + max(canopy height, building height)`, aligned to the finest
+available resolution among the inputs.
+
+This requires a free OpenTopography API key for the DEM download (see the
+"API keys" section of the package README for how to request one).
+
+```{r eval=FALSE}
+dsm <- gloBFPr::get_fused_dsm(
+  x = buildings_list$poly,
+  datasource_canopy_height = "metachm",
+  min_tree_height = 2,
+  opentopo_key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  quiet = FALSE
+)
+
+terra::plot(dsm)
+```
+
+Set `datasource_canopy_height = NULL` to build the DSM from terrain and
+buildings only, skipping the canopy height download.
+
+```{r eval=FALSE}
+dsm_no_canopy <- gloBFPr::get_fused_dsm(
+  x = buildings_list$poly,
+  datasource_canopy_height = NULL,
+  opentopo_key = "YOUR_OPENTOPOGRAPHY_API_KEY"
+)
+```
+
+By default, `get_fused_dsm()` outputs at the finest native resolution
+available between the downloaded DEM and canopy height model, so buildings
+are never silently blurred down to a coarser source raster (this matters
+especially where the DEM falls back to ~30 m SRTM data). Set `resolution`
+explicitly to force a finer grid than either native source — useful for
+pedestrian-level shadow, wind, or viewshed analysis — or a coarser one to
+speed up large study areas.
+
+```{r eval=FALSE}
+dsm_1m <- gloBFPr::get_fused_dsm(
+  x = buildings_list$poly,
+  datasource_canopy_height = "metachm",
+  resolution = 1,
+  opentopo_key = "YOUR_OPENTOPOGRAPHY_API_KEY"
+)
+```
+
+Set `min_tree_height` to control the minimum canopy height (in meters) treated as
+tree cover rather than noise.
+
+```{r eval=FALSE}
+dsm_with_canopy <- gloBFPr::get_fused_dsm(
+  x = buildings_list$poly,
+  datasource_canopy_height = "metachm",
+  min_tree_height = 1,
+  opentopo_key = "YOUR_OPENTOPOGRAPHY_API_KEY",
+  resolution = 1
+)
+```
+
+`prepare_openfoam_inputs()` builds the same fused DSM internally when called
+with `include_fused_dsm = TRUE` and an `opentopo_key`, using the same
+`datasource_canopy_height`/`min_tree_height` arguments — you do not need to
+call `get_fused_dsm()` separately before that workflow. The shadow/radiation
+functions (`svf()`, `get_shadow_footprint()`, `get_shadow_height()`,
+`get_radiation()`) and `get_3d_world()` take the terrain DEM and canopy height
+raster as separate `dem`/`canopy_height` arguments rather than a pre-fused
+DSM, so downloading a DEM and canopy raster once and passing them into those
+functions is the way to avoid repeat downloads there.
+
+# 3 Exporting 3D City Models
+
+`get_3d_world()` turns a study area into a portable 3D scene — terrain,
+buildings, trees, streets, lawns, and water — written as Wavefront OBJ and
+binary STL files that load directly in Rhino3D and Blender.
+
+```{r setup, message=FALSE}
+library(gloBFPr)
+library(sf)
+library(terra)
+
+data(globfp_example)
+buildings <- globfp_example
+```
+
+### 3.1 Quick start
+
+The fastest way to get a model is flat mode — no terrain download, no API
+key. We use the bundled example footprints.
+
+```{r quickstart}
+out_dir <- file.path(tempdir(), "world_flat")
+world <- get_3d_world(
+  x       = buildings,
+  terrain = FALSE,
+  canopy  = NULL,
+  out_dir = out_dir
+)
+
+list.files(out_dir)
+world$n_buildings
+```
+
+Drag `world.obj` into Rhino or Blender and you have the city. Each building
+is its own selectable group (`building_<id>`), coordinates are in metres,
+and the scene sits at the world origin — `world_metadata.json` stores the
+CRS and offset needed to georeference it back.
+
+### 3.2 Satellite texture
+
+For a photoreal ground, turn on every feature and drape Esri World Imagery
+over the terrain. Buildings sit on the DEM, trees come from the canopy
+height model, and streets, lawns, and water are painted into the terrain
+surface itself:
+
+The package ships a DEM and a canopy height raster for the same extent as
+`globfp_example`, so no API key or elevation download is needed:
+
+```{r full, eval=FALSE}
+data(globfp_example_dem)
+data(globfp_example_canopy_height)
+
+world <- get_3d_world(
+  x              = buildings,
+  terrain        = TRUE,
+  dem            = rast(globfp_example_dem),
+  canopy_height  = rast(globfp_example_canopy_height),
+  canopy         = NULL,
+  roads          = "overture",
+  water          = "overture",
+  greenspace     = TRUE,
+  basemap        = TRUE,
+  facade_palette = TRUE,
+  out_dir        = file.path(tempdir(), "world_textured"),
+  quiet          = FALSE
+)
+```
+
+What each argument contributes:
+
+- `terrain` + `dem` — the bundled elevation raster (omit `dem` and pass
+  `key` to download one from OpenTopography instead).
+- `canopy_height` — trees detected from the bundled canopy height model,
+  each scaled to its measured height (or set `canopy = "metachm"` to
+  download one).
+- `roads` — Overture segments buffered to arnis widths and painted as
+  asphalt, concrete sidewalks, and dirt paths. Segments flagged as bridges
+  are instead raised into elevated decks with ramps, railings, and pillars
+  (`bridges = FALSE` keeps them flat); tunnels are omitted from the ground.
+- `water` — rivers, lakes, and coast flattened just below their banks with a
+  sand fringe along the shoreline.
+- `greenspace` — ground-level lawns classified from `greenSD` map tiles
+  (`TRUE`/`"esri"`, or `"sentinel2"`), with canopy cells excluded since the
+  trees already stand for those.
+- `basemap` — satellite imagery saved as `basemap.jpg` and mapped onto the
+  ground with texture coordinates.
+
+The imagery replaces the surface-class colors on the terrain; buildings and
+trees keep their materials. If you publish renders, credit Esri, Maxar,
+Earthstar Geographics, and the GIS User Community.
+
+### 3.3 Voxel mode
+
+`all_vox = TRUE` rebuilds the same scene as blocks, the way arnis builds
+Minecraft worlds — stepped terrain, quantized building columns, voxel trees,
+and block-painted streets, lawns, and water:
+
+```{r voxel, eval=FALSE}
+world_vox <- get_3d_world(
+  x              = buildings,
+  terrain        = TRUE,
+  dem            = rast(globfp_example_dem),
+  canopy_height  = rast(globfp_example_canopy_height),
+  canopy         = NULL,
+  roads          = "overture",
+  water          = "overture",
+  greenspace     = TRUE,
+  facade_palette = TRUE,
+  all_vox        = TRUE,
+  vox_size       = 1,
+  out_dir        = file.path(tempdir(), "world_vox")
+)
+```
+
+Heights still come from your data — building `Height`, CHM tree heights, DEM
+terrain — only the geometry representation changes. `vox_size = 1` is
+Minecraft scale; larger blocks give chunkier, lighter models. Footprint
+edges are traded for the voxel look, so use the default mode when you need
+measurement-grade geometry.
+
+Both modes accept the same styling and performance controls: `color_by` maps
+any numeric column (including `get_morphology()` metrics) to a viridis ramp
+on the buildings, `max_trees` caps tree count, `simplify_terrain` coarsens
+the DEM, and `surface_res` sets how finely street edges are resolved.

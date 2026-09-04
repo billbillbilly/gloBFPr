@@ -4,11 +4,14 @@
 \alias{get_metadata}
 \title{get_metadata}
 \usage{
-get_metadata(test = FALSE)
+get_metadata(test = FALSE, quiet = TRUE)
 }
 \arguments{
 \item{test}{logic, Ignored during normal use; included for internal testing
 purposes. Defaults to \code{FALSE}.}
+
+\item{quiet}{logical. Accepted for consistency with other package functions;
+currently unused because this function does not emit cli messages.}
 }
 \value{
 sf a spatial polygon grid with attributes:

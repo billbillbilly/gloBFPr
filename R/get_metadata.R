@@ -1,3 +1,4 @@
+
 #' get_metadata
 #' @description
 #' Returns a spatial grid (as an sf object) containing metadata and download URLs
@@ -5,6 +6,8 @@
 #'
 #' @param test logic, Ignored during normal use; included for internal testing
 #' purposes. Defaults to \code{FALSE}.
+#' @param quiet logical. Accepted for consistency with other package functions;
+#' currently unused because this function does not emit cli messages.
 #'
 #' @return sf a spatial polygon grid with attributes:
 #' `id`, `gridID`, bounding box coordinates, and `download_url`.
@@ -45,7 +48,7 @@
 #'
 #' @export
 
-get_metadata <- function(test=FALSE) {
+get_metadata <- function(test=FALSE, quiet=TRUE) {
   if (test) {return(NULL)}
   info_extract <- function(name) {
     name <- sub("\\.zip$", "", name)
@@ -108,8 +111,8 @@ get_metadata <- function(test=FALSE) {
               ),
               ncol = 2,
               byrow = TRUE)
-            )
-          ), crs = 4326)) %>%
+          )
+        ), crs = 4326)) %>%
     dplyr::ungroup() %>%
     sf::st_as_sf()
   return(grids_sf)

@@ -1,0 +1,285 @@
+---
+title: "Urban Noise Mapping with gloBFPr and NoiseModelling"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{Urban Noise Mapping with gloBFPr and NoiseModelling}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Urban Noise Mapping
+
+This vignette shows how to prepare road-noise modelling inputs from building
+height data, OSM-style roads, greenspace, canopy height, and optional terrain
+data. The same input pattern used by `svf()` is used here: pass building
+footprints as `x`, choose the height column with `height_field`, and supply
+canopy/DEM rasters directly or let the function retrieve them.
+
+```{r setup, message=FALSE, eval=FALSE}
+library(gloBFPr)
+library(sf)
+library(terra)
+```
+
+The package includes a small building layer and companion raster examples. For a
+real study area, replace this with `search_3dglobdf()`.
+
+```{r eval=FALSE}
+data(globfp_example)
+data(globfp_example_dem)
+data(globfp_example_canopy_height)
+
+buildings <- globfp_example
+dem <- rast(globfp_example_dem)
+canopy_height <- rast(globfp_example_canopy_height)
+
+names(buildings)
+```
+
+## 1 Prepare Inputs
+
+By default, `prepare_noisemodelling_inputs()` and `get_noise_map()` download OSM
+roads from the bounding box of `x`. If measured traffic columns are not present,
+`infer_osm_traffic()` fills screening-level speed and traffic assumptions from
+the OSM `highway` class.
+
+```{r eval=FALSE}
+noise_inputs <- prepare_noisemodelling_inputs(
+  x = buildings,
+  height_field = "Height",
+  datasource_greenspace = "esri",
+  greenspace_zoom = 14,
+  canopy_height = canopy_height,
+  dem = dem,
+  receiver = "grid",
+  resolution = 25,
+  quiet = FALSE
+)
+```
+
+For measured traffic counts, pass a road layer with NoiseModelling traffic
+columns directly through `roads`. The inferred defaults are useful for screening
+or scenario comparisons, not calibrated regulatory maps.
+
+Use `prepare_noisemodelling_inputs()` when you want to inspect or export the
+layers before running the external NoiseModelling solver.
+
+```{r eval=FALSE}
+noise_inputs <- prepare_noisemodelling_inputs(
+  x = buildings,
+  height_field = "Height",
+  canopy_height = canopy_height,
+  dem = dem,
+  receiver = "grid",
+  resolution = 25,
+  quiet = TRUE
+)
+
+names(noise_inputs)
+nrow(noise_inputs$receivers)
+```
+
+The prepared object contains:
+
+- `buildings`: building polygons with `PK`, `HEIGHT`, and optional `POP`.
+- `roads`: road lines with `PK` and CNOSSOS-style traffic columns.
+- `ground`: hard/green ground absorption polygons.
+- `receivers`: 3D receiver points, defaulting to 4 m height.
+- `dem`: optional terrain raster aligned for later export.
+
+You can write a GeoPackage for inspection.
+
+```{r eval=FALSE}
+noise_inputs <- prepare_noisemodelling_inputs(
+  x = buildings,
+  roads = roads,
+  canopy_height = canopy_height,
+  dem = dem,
+  out_dir = tempdir(),
+  write = TRUE,
+  quiet = TRUE
+)
+
+noise_inputs$gpkg
+```
+
+### Fetch Canopy, Greenspace, and DEM Internally
+
+The noise functions can follow the same style as `svf()`: provide
+`datasource_canopy_height`, `datasource_greenspace`, and `key` instead of
+supplying rasters. Roads are downloaded internally from the building extent
+unless you pass `roads` explicitly.
+
+```{r eval=FALSE}
+noise_inputs <- prepare_noisemodelling_inputs(
+  x = buildings,
+  height_field = "Height",
+  min_tree_height = 2,
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  opentopo_key = Sys.getenv("OPENTOPOGRAPHY_KEY"),
+  receiver = "grid",
+  resolution = 25,
+  quiet = TRUE
+)
+```
+
+`opentopo_key` is only needed when DEM retrieval is requested. Canopy height is used to
+classify green ground absorption; it is not treated as a hard acoustic barrier.
+
+## 2 Run NoiseModelling
+
+`get_noise_map(run = TRUE)` runs the official headless NoiseModelling WPS
+scripts. This requires Java 11 or newer (11<=version<=17). The first run can download the
+headless NoiseModelling release into the R user cache, or you can preinstall it
+with `install_noisemodelling()`.
+
+```{r eval=FALSE}
+install_noisemodelling(version = "5.0.1")
+```
+
+```{r eval=FALSE}
+noise_result <- get_noise_map(
+  x = buildings,
+  height_field = "Height",
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  dem = dem,
+  receiver = "grid",
+  resolution = 25,
+  run = TRUE,
+  keep_files = TRUE,
+  quiet = FALSE,
+  java = 17
+)
+plot_noise_map(noise_result, period = "DEN", scalebar = TRUE)
+```
+
+```{r eval=FALSE}
+plot_noise_map(noise_result, period = "DEN")
+```
+
+The result includes the prepared inputs, the raw `RECEIVERS_LEVEL` output, a
+spatial `noise_map` receiver layer with period-specific columns such as
+`LAEQ_D`, `LAEQ_E`, `LAEQ_N`, and `LAEQ_DEN`, the official NoiseModelling
+`CONTOURING_NOISE_MAP` polygons in `isophones`, the exported GeoJSON paths,
+logs from each WPS script, and the NoiseModelling runner path.
+
+For production work, start with a building layer from `search_3dglobdf()` and
+replace OSM-inferred traffic with local speed and volume observations when
+available.
+
+### Advanced NoiseModelling Controls
+
+`get_noise_map()` exposes the main acoustic controls used by
+`Noise_level_from_source.groovy`. The defaults are deliberately moderate for
+screening maps; increasing propagation distance, reflection order, diffraction,
+or ray export can make the run much slower.
+
+```{r eval=FALSE}
+noise_result <- get_noise_map(
+  x = buildings,
+  height_field = "Height",
+  canopy_height = canopy_height,
+  dem = dem,
+  receiver = "grid",
+  resolution = 25,
+  run = TRUE,
+  java = 17,
+  reflection_order = 1,
+  max_src_distance = 500,
+  max_reflection_distance = 350,
+  diffraction_horizontal = TRUE,
+  diffraction_vertical = FALSE,
+  wall_alpha = 0.1,
+  humidity = 75,
+  temperature = 31,
+  favourable_occurrences = rep(0.5, 16),
+  max_error = 0.1,
+  export_source_id = FALSE,
+  frequency_field_prepend = "HZ"
+)
+```
+
+```{r eval=FALSE}
+plot_noise_map(noise_result, period = "DEN", scalebar = TRUE)
+```
+
+Key controls:
+
+- `reflection_order`: maximum number of specular reflections on vertical
+  surfaces. Higher values are more realistic in street canyons but much slower.
+- `max_src_distance`: maximum source-receiver search distance in meters. Larger
+  values include farther roads.
+- `max_reflection_distance`: maximum distance used when searching walls for
+  reflected paths.
+- `diffraction_horizontal` and `diffraction_vertical`: enable diffraction over
+  horizontal edges or around vertical edges. NoiseModelling recommends
+  horizontal diffraction for many propagation studies; vertical diffraction is
+  mainly for rail and industrial sources under CNOSSOS-EU guidance.
+- `wall_alpha`: wall absorption coefficient. `0.1` is a common reflective facade
+  assumption.
+- `humidity`, `temperature`, and `favourable_occurrences`: atmospheric
+  absorption and meteorological propagation settings.
+- `max_error`: pruning threshold in dB for negligible source contributions. A
+  smaller value can be more complete but slower.
+- `export_source_id`: keeps receiver levels by source id, useful for source
+  contribution diagnostics.
+- `rays_name`: exports propagation rays or attenuation diagnostics to a table or
+  file URL. This is mainly for debugging and can be very large.
+- `noise_wps_args`: passes named raw arguments to the NoiseModelling WPS script
+  for advanced options not yet represented by a dedicated R argument.
+
+The OSM traffic defaults used by `infer_osm_traffic()` mirror the category
+values embedded in NoiseModelling's `Import_OSM.groovy`, including the cited
+Good Practice Guide assumptions. `Import_OSM.groovy` itself works from a local
+`.osm`, `.osm.gz`, or `.osm.pbf` extract; the current R workflow instead
+downloads roads from the building bounding box and applies matching traffic
+defaults in R.
+
+If you already have a local OSM extract and want NoiseModelling to create the
+`ROADS` table itself, pass `osm_file` and leave `roads = NULL`.
+
+You can download a regional `.osm.pbf` extract directly in R. `osmextract` is a
+convenient option when the area is available from a provider such as Geofabrik:
+
+```{r eval=FALSE}
+install.packages("osmextract")
+
+osm_file <- osmextract::oe_get(
+  place = "Detroit, Michigan",
+  provider = "geofabrik",
+  download_directory = tempdir(),
+  force_download = FALSE
+)
+```
+
+You can also download a known extract URL with base R:
+
+```{r eval=FALSE}
+osm_file <- file.path(tempdir(), "michigan-latest.osm.pbf")
+
+utils::download.file(
+  "https://download.geofabrik.de/north-america/us/michigan-latest.osm.pbf",
+  osm_file,
+  mode = "wb"
+)
+```
+
+```{r eval=FALSE}
+noise_result <- get_noise_map(
+  x = buildings,
+  height_field = "Height",
+  canopy_height = canopy_height,
+  dem = dem,
+  osm_file = osm_file,
+  receiver = "grid",
+  resolution = 25,
+  run = TRUE,
+  java = 17
+)
+```
+
+This uses your `x` buildings and ground preparation from R, but asks
+NoiseModelling's `Import_OSM.groovy` to create the road network and traffic
+defaults from the OSM file.

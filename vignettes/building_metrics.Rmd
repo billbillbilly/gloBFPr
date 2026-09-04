@@ -1,0 +1,372 @@
+---
+title: "Building Metrics with gloBFPr"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{Building Metrics with gloBFPr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Analyze Building Footprints
+
+This vignette shows how to compute building-level metrics from a building
+footprint layer with height attributes. Most functions return the same `sf`
+object with additional metric columns, so the usual workflow is to pipe or
+reassign the result step by step.
+
+```{r setup, message=FALSE}
+library(gloBFPr)
+library(sf)
+library(dplyr)
+```
+
+## Example data
+
+The package includes a small `sf` example dataset with building footprints,
+unique IDs, and building heights.
+
+```{r}
+data(globfp_example)
+
+buildings <- globfp_example
+buildings <- buildings[seq_len(min(10, nrow(buildings))), ]
+
+names(buildings)
+```
+
+For your own area of interest, first retrieve building footprints with
+`search_3dglobdf()`, then pass the returned polygon layer to the metric
+functions.
+
+```{r eval=FALSE}
+buildings <- search_3dglobdf(
+  bbox = c(-83.065644, 42.333792, -83.045217, 42.346988),
+  out_type = "poly",
+  quiet = TRUE
+)
+```
+
+## 1 Morphological Metrics
+
+`get_morphology()` computes geometric and shape metrics such as footprint area,
+perimeter, volume, compactness, convexity, elongation, and pairwise distance.
+
+```{r eval=FALSE}
+morphology <- get_morphology(buildings, quiet = TRUE)
+
+morphology |>
+  st_drop_geometry() |>
+  select(id, Height, g_area, pmeter, vol, rec, cnv, elo_z) |>
+  head()
+```
+
+You can also request only a subset of metrics when you do not need the full
+set.
+
+```{r eval=FALSE}
+basic_shape <- get_morphology(
+  buildings,
+  metrics = c("g_area", "pmeter", "vol", "rec"),
+  quiet = TRUE
+)
+```
+
+## 2 Neighbor Metrics
+
+`get_neighbors()` estimates the number of neighboring buildings and centroid
+distance summaries using a fixed search radius and Voronoi adjacency.
+
+```{r eval=FALSE}
+neighbors <- get_neighbors(
+  morphology,
+  radius = 500,
+  quiet = TRUE
+)
+
+neighbors |>
+  st_drop_geometry() |>
+  select(id, n_count, m_ndist, min_ndist, max_ndist, sd_ndist) |>
+  head()
+```
+
+Use a smaller radius for dense local context or a larger radius for broader
+neighborhood context.
+
+```{r eval=FALSE}
+neighbors_100m <- get_neighbors(buildings, radius = 100, quiet = TRUE)
+```
+
+## 3 Distance to Nearest Greenspace
+
+`get_dng()` computes the distance from each building centroid to the nearest
+qualifying green patch within a buffer. The source can be `metachm`, `esri`, or
+`sentinel2`.
+
+By default the distance is measured in a straight line. Every result also
+carries a `dng_method` column recording how the value was obtained, which
+matters once network routing is switched on below.
+
+```{r eval=FALSE}
+dng <- get_dng(
+  neighbors,
+  datasource = "metachm",
+  radius = 800,
+  min_tree_height = 2,
+  min_area = 500,
+  unit = "m2",
+  quiet = TRUE
+)
+
+dng |>
+  st_drop_geometry() |>
+  select(id, dng, dng_method) |>
+  head()
+```
+
+For a 2D greenery mask source, use `esri` or `sentinel2`.
+
+```{r eval=FALSE}
+dng_esri <- get_dng(
+  buildings,
+  datasource = "esri",
+  zoom = 17,
+  radius = 800,
+  min_area = 500,
+  unit = "m2",
+  quiet = TRUE
+)
+```
+
+### Measuring Along Real Streets
+
+Straight-line distance ignores rivers, rail corridors, walls, and the simple
+fact that people walk on streets. Set `network = "osm"` to measure along real
+road and path centre lines instead. `get_dng()` downloads a walkable
+OpenStreetMap network for the study extent (motorways, trunk roads, and ways
+tagged `foot=no` are excluded), builds a routing graph, and reports
+
+    centroid to network  +  shortest path along network  +  network to green pixel
+
+```{r eval=FALSE}
+dng_net <- get_dng(
+  neighbors,
+  datasource = "metachm",
+  radius = 800,
+  min_area = 500,
+  unit = "m2",
+  network = "osm",
+  quiet = TRUE
+)
+
+dng_net |>
+  st_drop_geometry() |>
+  select(id, dng, dng_method) |>
+  head()
+```
+
+The network is downloaded once for the whole study area rather than once per
+building, so routing adds a single Overpass request regardless of how many
+buildings you pass in. If Overpass is unreachable or returns nothing,
+`get_dng()` warns and falls back to straight-line distance rather than failing.
+
+Supply your own lines when you need a specific network — a cleaned municipal
+sidewalk layer, a snapshot pinned to a particular date, or the same network you
+passed to `generate_block()`. Any `sf` line layer works, and it is reprojected
+for you.
+
+```{r eval=FALSE}
+# roads is an sf LINESTRING layer you already have
+dng_custom <- get_dng(
+  neighbors,
+  datasource = "metachm",
+  radius = 800,
+  min_area = 500,
+  unit = "m2",
+  network = roads,
+  quiet = TRUE
+)
+```
+
+`dng_method` tells you which measure each row actually used. A building falls
+back to `"euclidean"` when no path connects it to any green patch — typically
+an isolated network fragment, or a building whose buffer extends past the edge
+of the downloaded network. Check it before interpreting results, and compare
+the two measures to see where the street layout imposes a real detour:
+
+```{r eval=FALSE}
+table(dng_net$dng_method)
+
+comparison <- data.frame(
+  id        = dng$id,
+  euclidean = dng$dng,
+  network   = dng_net$dng
+)
+comparison$detour_ratio <- comparison$network / comparison$euclidean
+
+# Ratios near 1 mean the green space is straight ahead; large ratios flag
+# buildings cut off by barriers, dead ends, or missing crossings.
+head(comparison[order(-comparison$detour_ratio), ])
+```
+
+A few things to keep in mind. Distances are computed in the projected UTM CRS
+of your study area, so they are in metres. Green space is compared pixel by
+pixel, so a higher `zoom` gives a finer target set at the cost of runtime. And
+buildings connect to the graph at its vertices, so the network is densified to
+about 20 m spacing before routing — accurate enough for walking distances
+without inflating the graph.
+
+## 4 Building Green View Index
+
+`get_bgvi()` estimates Building Green View Index from building viewpoints. The
+DSM can include metaCHM canopy height, while the visible-green feature layer can
+come from height-filtered canopy, 2D map-tile greenspace, or the union of both.
+An OpenTopography API key is required for the DEM. This can be computationally
+heavy; start with a small subset of buildings.
+
+```{r eval=FALSE}
+bgvi <- get_bgvi(
+  buildings[1:10, ],
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  min_tree_height = 2,
+  radius = 800,
+  floor = FALSE,
+  workers = 1,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+
+bgvi |>
+  st_drop_geometry() |>
+  select(id, mean_gvi, bottom_gvi, top_gvi) |>
+  head()
+```
+
+To compute BGVI with a DSM built only from buildings and DEM, set
+`datasource_canopy_height = NULL` and provide a 2D greenspace source.
+
+```{r eval=FALSE}
+bgvi_2d_green <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = NULL,
+  datasource_greenspace = "esri",
+  radius = 800,
+  short_building_threshold = 6,
+  workers = 1,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+```
+
+To compute directional BGVI, provide one or more directions and a field of view
+in degrees. The function reuses each computed viewshed and filters visible
+greenery by direction.
+
+```{r eval=FALSE}
+bgvi_directional <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  radius = 800,
+  directions = c("southwest", "south", "southeast"),
+  field_of_view = 45,
+  workers = 1,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+
+bgvi_directional |>
+  st_drop_geometry() |>
+  select(id, mean_gvi_south, gvi_bottom_south, gvi_top_south) |>
+  head()
+```
+
+Use `plot_bgvi_viewshed()` when you want to inspect the viewshed behind one
+building's BGVI value. It uses the same DSM and green-feature preparation as
+`get_bgvi()`, but computes a single viewpoint and returns the diagnostic
+rasters invisibly when `plot = TRUE`.
+
+```{r eval=FALSE}
+top_direction_view <- plot_bgvi_viewshed(
+  buildings,
+  building = 195,
+  level = "top",
+  orientation = "north",
+  field_of_view = 90,
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  radius = 500,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+```
+
+You can also inspect a specific floor or supply an observer height directly.
+
+```{r eval=FALSE}
+fifth_floor_view <- plot_bgvi_viewshed(
+  buildings,
+  building = 1,
+  floor = 5,
+  orientation = 135,
+  field_of_view = 90,
+  datasource_canopy_height = "metachm",
+  datasource_greenspace = "esri",
+  radius = 500,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+
+fifth_floor_view$gvi
+fifth_floor_view$visible_green
+```
+
+To compute GVI by floor, set `floor = TRUE`. Use `floor_step` to sample every
+`n` floors and reduce runtime. The top estimated floor is always included.
+
+```{r eval=FALSE}
+bgvi_by_floor <- get_bgvi(
+  buildings[1:3, ],
+  datasource_canopy_height = "metachm",
+  radius = 800,
+  floor = TRUE,
+  floor_step = 3,
+  workers = 2,
+  key = Sys.getenv('OPENTOPO_API'),
+  quiet = TRUE
+)
+
+bgvi_by_floor |>
+  st_drop_geometry() |>
+  select(id, estimated_floors, mean_gvi, bottom_gvi, top_gvi, min_gvi, max_gvi, sd_gvi) |>
+  head()
+```
+
+## 5 A Complete Metric Pipeline
+
+For a typical analysis, build the result incrementally. Keep `quiet = TRUE` for
+batch workflows, or set it to `FALSE` when you want messages and progress bars.
+
+```{r eval=FALSE}
+result <- buildings |>
+  get_morphology(quiet = TRUE) |>
+  get_neighbors(radius = 500, quiet = TRUE) |>
+  get_dng(
+    datasource = "metachm",
+    radius = 800,
+    min_area = 500,
+    unit = "m2",
+    network = "osm",
+    quiet = TRUE
+  )
+
+metric_table <- result |>
+  st_drop_geometry() |>
+  select(
+    id, Height, g_area, vol, rec,
+    n_count, m_ndist, min_ndist, max_ndist, sd_ndist,
+    dng, dng_method
+  )
+
+head(metric_table)
+```
